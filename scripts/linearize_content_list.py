@@ -261,6 +261,19 @@ def format_block(item):
         if table_body:
             return table_body
 
+    # chart 是云端 vlm 后端新增的块类型（本地 pipeline 不产出）：图表被识别成
+    # markdown 表格或 mermaid，放在 content 字段。原样输出正文 + 图注。
+    if block_type == "chart":
+        parts = []
+        content = item.get("content", "").strip()
+        if content:
+            parts.append(content)
+        for caption in item.get("chart_caption", []):
+            caption = clean_text(caption)
+            if caption:
+                parts.append(caption)
+        return "\n".join(parts).strip()
+
     return ""
 
 

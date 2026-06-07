@@ -1,9 +1,10 @@
 ---
 name: install-paper2lark
 description: >
-  在一台 Windows + NVIDIA GPU 机器上，交互式地为用户安装并跑通 paper2lark
-  （论文 PDF → 中英对照飞书原生文档的编排工具）。AI 助手按本文件分阶段执行：
-  环境探测 → 安装 MinerU → 应用 Windows 补丁 → 下载模型 → 配置凭据 → 体检跑通。
+  交互式地为用户安装并跑通 paper2lark（论文 PDF → 中英对照飞书原生文档的编排工具）。
+  解析有两种后端：云 API（推荐，零模型下载、不需要 GPU，跨平台）或本地部署
+  （Windows + NVIDIA GPU + 约 14GB 模型，数据不出本机）。AI 助手按本文件分阶段执行：
+  环境探测 → 选后端装环境 →（本地才需）补丁/下模型 → 配置凭据 → 跑通验收。
   适用场景：用户说"帮我装一下 paper2lark / 把这个工具跑起来 / 配置这个论文转飞书工具"。
 ---
 
@@ -17,43 +18,50 @@ description: >
 
 paper2lark 把一篇学术论文 PDF，一键变成**带中英对照的飞书（Lark）原生文档**：
 解析（MinerU）→ 阅读顺序线性化 → 双语翻译（DeepSeek）→ 推送飞书 docx，
-保留公式、图片、表格。它是**上层编排工具**，真正的 PDF 解析靠外部依赖 MinerU。
+保留公式、图片、表格。它是**上层编排工具**，真正的 PDF 解析靠 MinerU。
 
-诚实的前置门槛，安装前务必跟用户确认，缺一不可：
+**解析有两种后端，安装路径因此分叉——这是你要先和用户确认的第一件事：**
 
-1. **Windows**。稳定性加固（WMI shim、子进程防死锁、可视化补丁）都是为 Windows 写的。
-   非 Windows 大部分编排逻辑仍可用，但本 Skill 的踩坑修复不适用。
-2. **NVIDIA GPU（建议 ≥6GB 显存）**。CPU 也能解析但慢到不实用。开发验证机为 RTX 4060 Laptop。
-3. **磁盘 ≥20GB 空闲**。光 MinerU 模型就约 14GB，这是物理现实，Skill 只能让下载过程无痛、可验证，不能让它消失。
-4. **一个飞书自建应用**（拿到 App ID / Secret，且授权了云文档读写、给了目标文件夹 token）。
-   没有的话推送飞书这一步会失败，但解析+翻译+本地产物仍可单独跑（用 `--prepare-only`）。
-5. **一个 OpenAI 兼容的翻译 API**（开发机用 DeepSeek：`OPENAI_API_KEY` + `OPENAI_BASE_URL`）。
-   只有用 `--translate` 时才需要。
+- **☁️ 云 API（`--backend cloud`，推荐，默认推荐给大多数人）**：调 MinerU 官方在线服务
+  解析，**本机零模型下载、不需要 GPU**。装起来极轻（只装 `requests`）。代价：论文会
+  上传到 MinerU 服务器（上海 OSS），需联网，每账号每天 2000 页额度，单文件 ≤200MB/600 页。
+- **💻 本地部署（`--backend local`，默认值）**：调本机 `mineru.exe` 解析，**数据不出本机、
+  可离线**。代价：要下载**约 14GB 模型**、需要 NVIDIA GPU、装起来重。适合论文敏感不能外传、
+  或要批量跑很多篇的场景。
 
-如果用户机器不满足 1/2/3，先把现状讲清楚，让用户决定是否继续，别默默往下装。
+诚实的前置门槛：
+
+1. **飞书自建应用**（拿到 App ID / Secret，授权云文档读写、给目标文件夹 token）——两种后端都需要。
+   没有的话推送飞书会失败，但解析+翻译+本地产物仍可单独跑（`--prepare-only`）。
+2. **OpenAI 兼容的翻译 API**（开发机用 DeepSeek：`OPENAI_API_KEY` + `OPENAI_BASE_URL`）——
+   只有用 `--translate` 时才需要。两种后端都用同一个翻译服务。
+3. **若选云 API**：一个 MinerU API token（在 https://mineru.net 申请）+ 能联网。**不需要 GPU、
+   不需要大磁盘。**
+4. **若选本地部署**：**Windows**（稳定性加固都是为 Windows 写的）+ **NVIDIA GPU（建议 ≥6GB）** +
+   **磁盘 ≥20GB 空闲**（光模型 14GB）。开发验证机为 RTX 4060 Laptop。
+
+先问清用户选哪种后端，再决定走下面哪条安装路径。拿不准就推荐云 API——门槛最低、最快见效。
 
 ---
 
 ## 阶段 0：环境探测（先看清现场，再决定怎么装）
 
-不要假设，先跑探测。把每一项结果讲给用户。
+不要假设，先跑探测。把每一项结果讲给用户。**探测内容取决于用户选了哪种后端。**
 
 ```bash
-# 操作系统与 GPU
-systeminfo | grep -iE "OS Name|Total Physical Memory"   # 或 PowerShell: Get-ComputerInfo
+# 两种后端都要：是否有 uv（本工具用 uv 管理 Python 3.12）
+uv --version 2>&1 || echo "no uv — 需先装 uv（pip install uv 或官方脚本）"
+
+# 仅本地部署需要：GPU 与磁盘
 nvidia-smi                                              # 有输出=有 N 卡；记下显存与驱动 CUDA 版本
-
-# 磁盘空闲（C 盘临时盘、工具所在盘）
-# PowerShell: Get-PSDrive C, D | Select Name, Free
-
-# 是否已有 Python / uv（本工具用 uv 管理 Python 3.12，没有会自动装）
-uv --version 2>&1 || echo "no uv — setup 脚本会用 uv 装 Python 3.12，需先有 uv"
+# PowerShell: Get-PSDrive C, D | Select Name, Free      # 磁盘空闲，本地后端要 ≥20GB
 ```
 
 决策：
-- **没 N 卡** → 明确告知会退化到 CPU、极慢，问用户是否仍要继续。
-- **磁盘 < 20GB** → 提示模型下载会失败，建议先腾空间或换盘。
-- **没装 uv** → setup 脚本依赖 `uv`。先让用户装 uv（`pip install uv` 或官方安装脚本），再继续。
+- **没装 uv** → 两种后端都依赖 `uv` 建环境。先让用户装 uv，再继续。
+- **选了云 API** → 不用管 GPU/磁盘，直接跳到「阶段 2A：云 API 安装」。
+- **选了本地部署且没 N 卡** → 明确告知会退化到 CPU、极慢，问用户是否仍要继续（或改用云 API）。
+- **选了本地部署且磁盘 < 20GB** → 模型下载会失败，建议腾空间、换盘，或改用云 API。
 
 ---
 
@@ -72,9 +80,39 @@ cd <REPO_ROOT>/mineru-workbench
 
 ---
 
-## 阶段 2：安装 MinerU（关键岔路 —— 必须先判断 MinerU 从哪来）
+## 阶段 2A：云 API 安装（推荐路径，零模型下载）
 
-⚠️ **这是本 Skill 最容易踩错的一步，务必先探测再装。**
+如果用户选了云 API，这一段就是全部安装步骤，**跳过阶段 2B / 3 / 4**（那些是本地部署专属）。
+
+1. 建一个轻量 venv，**只装 `requests`**（不装 mineru、不下模型、不要 GPU）：
+
+   ```powershell
+   uv python install 3.12
+   uv venv .venv --python 3.12 --seed
+   .\.venv\Scripts\pip.exe install requests
+   ```
+
+2. 配 MinerU API token（在 https://mineru.net 申请；token 走环境变量，不要写进文件）：
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable('MINERU_API_TOKEN','<用户的token>','User')
+   ```
+   设完让用户**新开一个终端**（用户级环境变量对已开终端不生效）。
+
+3. 直接跳到阶段 5 配飞书/翻译凭据，再到阶段 6 用 `--backend cloud` 跑通。
+
+> 云 API 的诚实边界，安装时讲清楚：① 论文会上传到 MinerU 服务器（上海 OSS）做解析；
+> ② 需联网；③ 每账号每天 2000 页额度（超出降优先级）；④ 单文件 ≤200MB、≤600 页。
+> 数据敏感不能外传的论文，请改用阶段 2B 的本地部署。
+
+---
+
+## 阶段 2B：本地部署安装 MinerU（数据不出本机，但要下约 14GB 模型）
+
+> 仅当用户选了本地部署时做这一段。**包很大**：约 14GB 模型 + CUDA torch，需要 GPU。
+> 只图省事、论文可外传的用户，回去用阶段 2A 的云 API 更轻。
+
+⚠️ **这是本地路径最容易踩错的一步，务必先探测再装。**
 
 仓库自带的 `scripts/setup-mineru.ps1` 是**开发机专用**的：它假设 MinerU 源码就放在
 仓库**同级目录** `<REPO_ROOT>/mineru-prototype`，用 `pip install -e` 以 editable 方式
@@ -147,7 +185,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-mineru.ps1
 
 ---
 
-## 阶段 3：应用 MinerU Windows 稳定性补丁（可选但强烈建议）
+## 阶段 3：应用 MinerU Windows 稳定性补丁（仅本地部署，可选但强烈建议）
+
+> 云 API 用户跳过本阶段——补丁针对的是本机 mineru.exe。
 
 MinerU CLI 在 Windows 上用 spawn 子进程池生成可视化预览，收尾 `shutdown(wait=True)`
 可能永久阻塞、拖死整个解析。补丁在 `win32` 下把它换成线程池（可视化只是预览，非核心
@@ -166,7 +206,9 @@ MinerU CLI 在 Windows 上用 spawn 子进程池生成可视化预览，收尾 `
 
 ---
 
-## 阶段 4：下载 MinerU 模型（约 14GB，最耗时的一步）
+## 阶段 4：下载 MinerU 模型（仅本地部署，约 14GB，最耗时的一步）
+
+> 云 API 用户跳过本阶段——云端自带模型，本机不下任何模型。
 
 默认下 `pipeline` 模型。源可选 `huggingface`（脚本默认）或 `modelscope`（国内更快）。
 
@@ -202,8 +244,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -Source m
 
 设完**让用户新开一个终端**（用户级环境变量对已开终端不生效）。
 没飞书凭据也能继续——阶段 6 用 `--prepare-only` 只产出本地文件，不碰飞书 API。
+云 API 用户的 `MINERU_API_TOKEN` 也在这里一并确认已设（阶段 2A 已设过则跳过）。
 
-### 关于 WMI shim（这台机器类问题的兜底，了解即可）
+### 关于 WMI shim（仅本地部署相关，了解即可）
 
 部分 Windows 机器 WMI 子系统损坏会让 `onnxruntime` 导入永久卡死（连带 MinerU 启动卡死，
 表象像"mineru.exe 不返回"，但根因不是内存）。阶段 2 复制进 venv 的 `sitecustomize.py`
@@ -214,7 +257,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -Source m
 
 ## 阶段 6：体检 + 跑通第一篇（验收）
 
-### 先体检
+### 先体检（仅本地部署）
+
+云 API 用户跳过——preflight 查的是本机 GPU/模型/WMI，对云后端无意义。
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\preflight.py
@@ -226,59 +271,67 @@ torch 是否 CUDA 版且 GPU 可见、有无残留 fast_api 进程。退出码 0
 - **commit 余量 < 2GB**：CUDA DLL 加载易触发 WinError 1455。关掉占内存的程序再跑。
 - **残留 fast_api 进程**：启动解析时会自动清场，一般不用管；不放心就先结束 `python -m mineru.cli.fast_api`。
 - **WMI 损坏但 shim 已生效**：解析不受影响，是 WARN 不是 FAIL，可继续；彻底修复需重启电脑。
-- **torch CUDA 不可用**：回到阶段 2 第 3 步重装 CUDA 版 torch。
+- **torch CUDA 不可用**：回到阶段 2B 第 3 步重装 CUDA 版 torch。
 
 ### 跑通第一篇（端到端验收）
 
-先用 `--prepare-only` 跑一遍只出本地产物，确认解析+线性化+翻译链路通，再开飞书推送：
+先用 `--prepare-only` 跑一遍只出本地产物，确认解析+线性化+翻译链路通，再开飞书推送。
 
-```powershell
-# 只出本地产物（不碰飞书），验证解析+翻译
-.\.venv\Scripts\python.exe .\scripts\pdf_to_feishu_docx.py `
-  --input-pdf "D:\path\to\paper.pdf" `
-  --title "论文导读：示例标题" `
-  --translate `
-  --prepare-only
-```
-
-产物路径（注意单层/双层之分，找翻译/双语产物去**单层** auto）：
-- MinerU 原始解析产物：`runtime/output/<stem>/<stem>/auto/`（`<stem>.md`、`content_list.json`、`images/`）
-- 线性化/翻译/ready 产物：`runtime/output/<stem>/auto/`（`<stem>_linearized.md`、
-  `<stem>_linearized_bilingual.md`、`<stem>_feishu_docx_ready.md`）
-
-确认双语 md 中英逐段对照、公式（MinerU 用单 `$...$` 行内格式）保留后，去掉 `--prepare-only`
-真正推送飞书：
+**云 API（推荐）**：加 `--backend cloud`，可选 `--model-version vlm`（更全，多识别图表）：
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\pdf_to_feishu_docx.py `
   --input-pdf "D:\path\to\paper.pdf" `
   --title "论文导读：示例标题" `
-  --translate
+  --backend cloud --model-version vlm `
+  --translate --prepare-only
 ```
+（token 已在阶段 2A 写进 `MINERU_API_TOKEN`，无需带参；也可显式 `--api-token`。）
+
+**本地部署**：不加 `--backend` 即默认 local：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\pdf_to_feishu_docx.py `
+  --input-pdf "D:\path\to\paper.pdf" `
+  --title "论文导读：示例标题" `
+  --translate --prepare-only
+```
+
+产物路径（找翻译/双语产物去 `auto` 目录）：
+- 云 API：产物都在 `<mineru-output-dir>/auto/`（content_list、images、各 md 同层）。
+- 本地：MinerU 原始产物在 `runtime/output/<stem>/<stem>/auto/`；线性化/翻译/ready 产物在
+  单层 `runtime/output/<stem>/auto/`（`<stem>_linearized.md`、`_bilingual.md`、`_feishu_docx_ready.md`）。
+
+确认双语 md 中英逐段对照、公式（行内 `$...$` 格式）保留后，去掉 `--prepare-only` 真正推送飞书
+（命令同上，删掉 `--prepare-only`）。
 
 成功标志：命令打印出飞书文档链接，文档里有正文、图片块、公式。同一篇 PDF 再跑会命中
-内容级缓存（按源 PDF sha1），约 2.4s 秒过、不重解析、不碰 GPU。
+内容级缓存（按源 PDF sha1），秒过、不重解析；云 API 命中缓存还能省每日额度。
 
 ---
 
 ## 收尾：把结果讲清楚
 
 装完跟用户确认这几件事，作为交付清单：
-- MinerU 与 CUDA torch 已装、模型已下、`preflight.py` 绿灯。
+- **云 API**：venv 只装了 `requests`，`MINERU_API_TOKEN` 已配，第一篇用 `--backend cloud` 跑通。
+- **本地**：MinerU + CUDA torch 已装、模型已下、`preflight.py` 绿灯，第一篇 `--backend local` 跑通。
 - 第一篇论文已端到端跑通（给出飞书文档链接或本地双语产物路径）。
-- 凭据已写入用户级环境变量，以后新终端直接 `pdf_to_feishu_docx.py --input-pdf ... --translate` 即可。
-- 提醒可调环境变量（超时 `MINERU_CLI_TIMEOUT`、GPU 空闲阈值 `MINERU_GPU_IDLE_MIB`、
-  WMI 开关 `MINERU_WMI_SHIM`、翻译失败比例 `TRANSLATE_FAIL_RATIO_LIMIT`、
-  跳过体检 `MINERU_SKIP_PREFLIGHT`），细节见 README「稳定性与调优」。
+- 凭据已写入用户级环境变量，以后新终端直接 `pdf_to_feishu_docx.py --input-pdf ... --translate`
+  （加不加 `--backend cloud` 取决于用哪种后端）。
+- 提醒可调环境变量（云 API 也用 `MINERU_CLI_TIMEOUT` 控制轮询超时、`MINERU_API_TOKEN` 存 token；
+  本地另有 `MINERU_GPU_IDLE_MIB` / `MINERU_WMI_SHIM` / `TRANSLATE_FAIL_RATIO_LIMIT` /
+  `MINERU_SKIP_PREFLIGHT`），细节见 README「稳定性与调优」。
 
 ## 常见卡点速查
 
 | 现象 | 根因 | 处理 |
 |---|---|---|
-| `MinerU source directory not found` | 跑了 setup 脚本但同级没有 `mineru-prototype` | 走阶段 2 分支 A，从 PyPI 装 |
-| `import mineru` 卡很久 / mineru.exe 不返回 | WMI 损坏让 onnxruntime 导入卡死 | 确认 venv 有 `sitecustomize.py`、`MINERU_WMI_SHIM` 未关；彻底修复重启电脑 |
-| torch 装成 CPU 版，CUDA 不可用 | PyPI 在 Win 默认给 CPU 轮子 | 用 `--index-url https://download.pytorch.org/whl/cu128` 强装 |
-| `mineru-models-download` 报 "Run setup first" | venv 没装好 MinerU | 回阶段 2 |
+| 云 API 报"需要 MinerU API token" | 没配 `MINERU_API_TOKEN` 或没新开终端 | 阶段 2A 设环境变量后重开终端，或带 `--api-token` |
+| 云 API 报文件超限 | 单文件 >200MB 或 >600 页 | 拆分 PDF，或改用本地后端 |
+| `MinerU source directory not found` | 本地：跑了 setup 脚本但同级没有 `mineru-prototype` | 走阶段 2B 分支 A，从 PyPI 装 |
+| `import mineru` 卡很久 / mineru.exe 不返回 | 本地：WMI 损坏让 onnxruntime 导入卡死 | 确认 venv 有 `sitecustomize.py`、`MINERU_WMI_SHIM` 未关；彻底修复重启电脑 |
+| torch 装成 CPU 版，CUDA 不可用 | 本地：PyPI 在 Win 默认给 CPU 轮子 | 用 `--index-url https://download.pytorch.org/whl/cu128` 强装 |
+| `mineru-models-download` 报 "Run setup first" | 本地：venv 没装好 MinerU | 回阶段 2B |
 | 解析报 `CUBLAS_STATUS_EXECUTION_FAILED` | 多任务抢同一张卡 | 工具自带解析互斥锁+自动重试 1 次；别同时开多个解析 |
 | 飞书推送失败 | 凭据没设/没新开终端/应用没授权云文档 | 阶段 5；先 `--prepare-only` 验证非飞书环节 |
 | 找不到双语 md | 找错层级（去了双层 auto） | 翻译产物在**单层** `runtime/output/<stem>/auto/` |

@@ -272,6 +272,30 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-mineru-pipeline.ps1 `
 - 复用命中时会自动同步旧解析目录里的 `images/` 到当前输出目录
 - 没有命中缓存时，才会重新调用 MinerU 做解析
 
+### 解析后端：本地 or 云 API
+
+解析这一步支持两种后端，用 `--backend` 切换（默认 `local`）：
+
+- `--backend local`（默认）：调本机 `mineru.exe`，需约 14GB 模型 + GPU，数据不出本机、可离线。
+- `--backend cloud`：调 MinerU 官方在线 API（`mineru.net`），**本机零模型下载、不需要 GPU**。
+  需要一个 API token（在 https://mineru.net 申请），论文会上传到 MinerU 服务器解析。
+  每账号每天 2000 页额度，单文件 ≤200MB/600 页。
+
+云后端示例（token 走环境变量 `MINERU_API_TOKEN`，也可 `--api-token` 传入）：
+
+```powershell
+$env:MINERU_API_TOKEN = "<你的token>"
+.\.venv\Scripts\python.exe .\scripts\pdf_to_feishu_docx.py `
+  --input-pdf "D:\path\to\paper.pdf" `
+  --title "论文导读：示例标题" `
+  --backend cloud --model-version vlm `
+  --translate
+```
+
+`--model-version` 仅云后端生效：`pipeline`（默认，与本地同款）或 `vlm`（更全，能多识别图表/
+chart 块）。两种后端产出的 `content_list.json` 结构一致，下游线性化/翻译/飞书链路完全共用；
+云后端同样按源 PDF sha1 命中内容级缓存，同一篇再跑不重复上传、不消耗每日额度。
+
 ### 直接命令
 
 ```powershell
@@ -317,6 +341,7 @@ paper2lark/
 ├─ SKILL.md                        # 喂给 AI 的安装/配置向导（Skill Download 范式）
 ├─ scripts/                        # 全部业务脚本
 │  ├─ pdf_to_feishu_docx.py        # 一键总入口：PDF→解析→线性化→(翻译)→飞书 docx
+│  ├─ mineru_cloud.py              # 云 API 解析后端（--backend cloud，无需本地模型/GPU）
 │  ├─ content_list_to_feishu_docx.py  # 从 content_list 起步的 docx 管线
 │  ├─ linearize_content_list.py    # content_list.json → 线性化 Markdown
 │  ├─ translate_content.py         # DeepSeek 双语翻译（带重试+失败汇总）
@@ -360,7 +385,8 @@ paper2lark/
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `MINERU_CLI_TIMEOUT` | 1800 | 单次解析超时秒数 |
+| `MINERU_CLI_TIMEOUT` | 1800 | 单次解析超时秒数（云后端用作轮询超时） |
+| `MINERU_API_TOKEN` | (未设) | 云后端（`--backend cloud`）的 MinerU API token |
 | `MINERU_GPU_IDLE_MIB` | 1500 | 解析前等待 GPU 显存回落到的阈值(MiB) |
 | `MINERU_WMI_SHIM` | auto | WMI 兜底：auto/force/off |
 | `TRANSLATE_FAIL_RATIO_LIMIT` | 0.2 | 翻译失败比例超过则整体报错 |

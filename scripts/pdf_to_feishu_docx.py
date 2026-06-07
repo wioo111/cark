@@ -56,6 +56,25 @@ def parse_args():
         default=None,
         help="MinerU parsing method. Defaults to config or auto.",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["local", "cloud"],
+        default=None,
+        help="解析后端：local（本地 mineru.exe，需 14GB 模型+GPU）或 "
+             "cloud（MinerU 云 API，零模型下载，需 MINERU_API_TOKEN）。默认 local。",
+    )
+    parser.add_argument(
+        "--model-version",
+        choices=["pipeline", "vlm"],
+        default=None,
+        help="云后端模型版本：pipeline（默认，与本地同款）或 vlm（更全，多识别图表）。"
+             "仅 --backend cloud 时生效。",
+    )
+    parser.add_argument(
+        "--api-token",
+        default=os.getenv("MINERU_API_TOKEN", ""),
+        help="MinerU 云 API token。默认读环境变量 MINERU_API_TOKEN。仅 --backend cloud 时用。",
+    )
     parser.add_argument("--replacements-file", help="Optional JSON file describing post-import text replacements.")
     parser.add_argument(
         "--replacement-block-limit",
@@ -117,6 +136,9 @@ def build_runtime_settings(args):
         "app_secret": coalesce(args.app_secret, config.get("app_secret"), ""),
         "image_mode": coalesce(args.image_mode, config.get("image_mode"), "note"),
         "parse_method": coalesce(args.parse_method, config.get("parse_method"), "auto"),
+        "backend": coalesce(args.backend, config.get("backend"), "local"),
+        "model_version": coalesce(args.model_version, config.get("model_version"), "pipeline"),
+        "api_token": coalesce(args.api_token, config.get("api_token"), ""),
         "replacements_file": replacements_file,
         "replacement_block_limit": coalesce(args.replacement_block_limit, config.get("replacement_block_limit"), 40),
         "reuse_existing_parse": args.reuse_existing_parse or bool(config.get("reuse_existing_parse", True)),
@@ -455,6 +477,39 @@ def run_mineru_pipeline(settings):
     }
 
 
+def run_cloud_pipeline(settings):
+    """用 MinerU 云 API 解析，返回 content_list.json 路径。
+
+    云后端不碰本地 GPU/模型，所以跳过 GPU 锁、显存自检、fast_api 清理等本地专属逻辑。
+    产物（content_list.json + images/）解压到 mineru_output_dir/auto，与本地后端的单层
+    auto 布局对齐，下游 sync_parse_assets / linearize 可直接复用。
+    """
+    from mineru_cloud import parse_pdf_via_cloud
+
+    output_dir = settings["mineru_output_dir"] / "auto"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _progress(state, progress):
+        extra = f" {progress}" if progress else ""
+        print(f"[云解析] state={state}{extra}", file=sys.stderr)
+
+    try:
+        cli_timeout = int(os.getenv("MINERU_CLI_TIMEOUT", "1800"))
+    except ValueError:
+        cli_timeout = 1800
+
+    content_list_json = parse_pdf_via_cloud(
+        settings["mineru_input_pdf"],
+        output_dir,
+        token=settings.get("api_token", ""),
+        model_version=settings.get("model_version", "pipeline"),
+        is_ocr=(settings.get("parse_method") == "ocr"),
+        timeout=cli_timeout,
+        on_progress=_progress,
+    )
+    return content_list_json
+
+
 def _file_sha1(path):
     digest = hashlib.sha1()
     with Path(path).open("rb") as fh:
@@ -542,6 +597,13 @@ def sync_parse_assets(content_list_json, markdown_output_dir):
     target_images_dir = markdown_output_dir / "images"
     if not source_images_dir.exists():
         return False
+    # 云后端把产物直接解压到 markdown 输出目录，此时 source==target，无需搬运
+    # （否则 copytree 自我复制会触发 WinError 32）。
+    try:
+        if source_images_dir.resolve() == target_images_dir.resolve():
+            return True
+    except OSError:
+        pass
     shutil.copytree(source_images_dir, target_images_dir, dirs_exist_ok=True)
     return True
 
@@ -551,23 +613,25 @@ def main():
     settings = build_runtime_settings(args)
 
     # 启动前轻量体检：提前暴露 commit 内存不足/残留进程等问题，而不是跑到一半崩。
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from preflight import run_quick_check
+    # 云后端不碰本地 GPU/内存，跳过体检（其致命项都是本地解析专属）。
+    if settings["backend"] == "local":
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from preflight import run_quick_check
 
-        pf_warns, pf_fatals = run_quick_check()
-        for w in pf_warns:
-            print(f"[preflight 警告] {w}", file=sys.stderr)
-        if pf_fatals and os.getenv("MINERU_SKIP_PREFLIGHT") != "1":
-            details = "; ".join(pf_fatals)
-            raise FeishuApiError(
-                f"运行前体检发现致命问题: {details}。"
-                f"处理后重试，或设 MINERU_SKIP_PREFLIGHT=1 强制继续。"
-            )
-    except FeishuApiError:
-        raise
-    except Exception:
-        pass  # 体检本身不能阻断主流程
+            pf_warns, pf_fatals = run_quick_check()
+            for w in pf_warns:
+                print(f"[preflight 警告] {w}", file=sys.stderr)
+            if pf_fatals and os.getenv("MINERU_SKIP_PREFLIGHT") != "1":
+                details = "; ".join(pf_fatals)
+                raise FeishuApiError(
+                    f"运行前体检发现致命问题: {details}。"
+                    f"处理后重试，或设 MINERU_SKIP_PREFLIGHT=1 强制继续。"
+                )
+        except FeishuApiError:
+            raise
+        except Exception:
+            pass  # 体检本身不能阻断主流程
 
     mineru_input_pdf, staged_input = stage_input_pdf(settings["input_pdf"])
     settings["mineru_input_pdf"] = mineru_input_pdf
@@ -580,11 +644,16 @@ def main():
             mineru_result["reused_cache"] = True
 
     if not content_list_json:
-        mineru_result = run_mineru_pipeline(settings)
-        mineru_result["reused_cache"] = False
-        content_list_json = locate_content_list(settings["mineru_output_dir"])
-        # 写源 PDF sha1 标记，供下次按内容命中缓存（不依赖文件名）。
-        write_source_hash_marker(settings["mineru_output_dir"], settings["mineru_input_pdf"])
+        if settings["backend"] == "cloud":
+            content_list_json = run_cloud_pipeline(settings)
+            mineru_result = {"reused_cache": False, "backend": "cloud"}
+        else:
+            mineru_result = run_mineru_pipeline(settings)
+            mineru_result["reused_cache"] = False
+            mineru_result["backend"] = "local"
+            content_list_json = locate_content_list(settings["mineru_output_dir"])
+        # 写源 PDF sha1 标记，供下次按内容命中缓存（不依赖文件名，云/本地通用）。
+        write_source_hash_marker(content_list_json.parent, settings["mineru_input_pdf"])
 
     assets_synced = sync_parse_assets(content_list_json, settings["linearized_output"].parent)
     linearize_content_list_file(content_list_json, settings["linearized_output"])

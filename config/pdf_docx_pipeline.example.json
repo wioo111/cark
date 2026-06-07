@@ -4,6 +4,8 @@
   "linearized_output": "./runtime/output/paper-name/auto/paper-name_linearized.md",
   "prepared_output": "./runtime/output/paper-name/auto/paper-name_feishu_docx_ready.md",
   "title": "论文导读：示例标题",
+  "backend": "local",
+  "model_version": "pipeline",
   "parse_method": "auto",
   "image_mode": "note",
   "folder_token": "",
