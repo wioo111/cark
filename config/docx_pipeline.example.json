@@ -1,0 +1,11 @@
+{
+  "content_list_json": "./runtime/output/<task-id>/<paper>/auto/<paper>_content_list.json",
+  "linearized_output": "./runtime/output/<task-id>/<paper>/auto/<paper>_linearized.md",
+  "prepared_output": "./runtime/output/<task-id>/<paper>/auto/<paper>_feishu_docx_ready.md",
+  "title": "论文导读：示例标题",
+  "image_mode": "note",
+  "folder_token": "",
+  "replacement_block_limit": 40,
+  "replacements_file": "./config/feishu_text_replacements.example.json",
+  "prepare_only": false
+}

@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+
+# ===== runtime: 模型 / 缓存 / 运行期产物(都不该提交) =====
+runtime/models/
+runtime/hf-home/
+runtime/modelscope-cache/
+runtime/python/
+runtime/uv-cache/
+runtime/pip-cache/
+runtime/tmp/
+runtime/logs/
+runtime/locks/
+runtime/uploads/
+runtime/output/
+runtime/inputs/
+
+# ===== 日志 =====
+*.log
+
+# ===== 凭据 / 本地配置(绝不提交) =====
+.env
+*.secret
+config/*local*.json
+# MinerU 下载器生成的本地配置（含本机绝对模型路径），用 config/mineru.example.json 作模板
+config/mineru.json
+
+# ===== 整个 runtime 运行期目录（保险起见整体忽略，仅保留占位） =====
+runtime/*
+!runtime/.gitkeep
+
+# ===== 操作系统 =====
+Thumbs.db
+.DS_Store
+
+# ===== 内部调试记录（含本机绝对路径，不公开；价值已沉淀进 README/开发文档） =====
+docs/mineru_windows_gpu_debug_report_20260608.md

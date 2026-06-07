@@ -1,0 +1,17 @@
+[
+  {
+    "match": "exact",
+    "from": "抽象的",
+    "to": "摘要"
+  },
+  {
+    "match": "contains",
+    "from": "Both authors contributed equally to this research.",
+    "to": "∗两位作者对本研究贡献相同。"
+  },
+  {
+    "match": "exact",
+    "from": "与多个用户和人工智能代理协作文档编辑",
+    "to": "与多个用户和人工智能代理协作文档编辑"
+  }
+]
