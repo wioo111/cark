@@ -20,8 +20,9 @@
   完整的手动安装步骤作为 fallback。② 14GB 模型必须下载，这是物理现实，Skill 能做的是
   让过程无痛、可验证，而不是让它消失。
 
-> 还没有 `SKILL.md`？当前仓库已具备全部脚本与手动流程，`SKILL.md` 是下一步要沉淀的
-> 安装向导（见 `docs/` 开发进展）。在此之前，按下面"手动安装"操作即可。
+> 安装向导见仓库根目录的 [`SKILL.md`](SKILL.md)：分阶段（环境探测 → 安装 MinerU →
+> 应用 Windows 补丁 → 下载模型 → 配置凭据 → 体检跑通），把它喂给具备命令执行能力的
+> AI 助手即可交互式安装。没有 agentic AI 的用户，按下面"手动安装"步骤操作。
 
 ## 致谢与依赖
 
@@ -313,7 +314,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-mineru-pipeline.ps1 `
 
 ```
 paper2lark/
-├─ SKILL.md                        # （计划中）喂给 AI 的安装/配置向导
+├─ SKILL.md                        # 喂给 AI 的安装/配置向导（Skill Download 范式）
 ├─ scripts/                        # 全部业务脚本
 │  ├─ pdf_to_feishu_docx.py        # 一键总入口：PDF→解析→线性化→(翻译)→飞书 docx
 │  ├─ content_list_to_feishu_docx.py  # 从 content_list 起步的 docx 管线
