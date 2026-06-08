@@ -18,7 +18,7 @@ description: >
 ## 这个工具是什么（先对齐预期）
 
 paper2lark 把一篇学术论文 PDF，一键变成**带中英对照的飞书（Lark）原生文档**：
-解析（MinerU）→ 阅读顺序线性化 → 双语翻译（DeepSeek）→ 推送飞书 docx，
+解析（MinerU）→ 阅读顺序线性化 → 双语翻译（任意 OpenAI 兼容 LLM）→ 推送飞书 docx，
 保留公式、图片、表格。它是**上层编排工具**，真正的 PDF 解析靠 MinerU。
 
 **解析有两种后端，安装路径因此分叉——这是你要先和用户确认的第一件事：**
@@ -34,8 +34,11 @@ paper2lark 把一篇学术论文 PDF，一键变成**带中英对照的飞书（
 
 1. **飞书自建应用**（拿到 App ID / Secret，授权云文档读写、给目标文件夹 token）——两种后端都需要。
    没有的话推送飞书会失败，但解析+翻译+本地产物仍可单独跑（`--prepare-only`）。
-2. **OpenAI 兼容的翻译 API**（开发机用 DeepSeek：`OPENAI_API_KEY` + `OPENAI_BASE_URL`）——
-   只有用 `--translate` 时才需要。两种后端都用同一个翻译服务。
+2. **OpenAI 兼容的翻译 API（用户自行准备）**——只有用 `--translate` 时才需要。
+   工具不绑定任何特定服务，任何提供 OpenAI 兼容 `/chat/completions` 接口的 LLM 都行
+   （DeepSeek、OpenAI、通义千问、Moonshot、本地 Ollama/vLLM…）。用户给出 `OPENAI_API_KEY`
+   + `OPENAI_BASE_URL` 两个值即可。**不要替用户假定用 DeepSeek**——开发机恰好用它，但那只是
+   一个例子，要走「凭据获取引导」问清用户用哪家。两种后端都用同一个翻译服务。
 3. **若选云 API**：一个 MinerU API token（在 https://mineru.net 申请）+ 能联网。**不需要 GPU、
    不需要大磁盘。**
 4. **若选本地部署**：**Windows**（稳定性加固都是为 Windows 写的）+ **NVIDIA GPU（建议 ≥6GB）** +
@@ -282,16 +285,50 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -Source m
 
 ## 阶段 5：配置凭据（飞书 + 翻译）
 
-凭据走**环境变量**，新终端自动读，无需带参。值由用户提供，你不要编造，也不要把密钥回显到对话里。
+### 凭据获取引导（用户没有现成 key 时，你要主动一步步带着他拿）
+
+用户大概率**没有现成的凭据**。不要只甩一句"去配 token"，而是按下面逐项引导：先问"这个你有了吗？"，
+没有就给申请路径，拿到后再帮他写进环境变量。三类凭据按需获取，缺哪个补哪个：
+
+1. **MinerU API token**（仅云后端 `--backend cloud` 需要；本地后端不需要）
+   - 引导话术：打开 https://mineru.net → 注册/登录 → 进入后台找 "API" / "令牌" / "Token" 页 →
+     新建一个 token → 复制。
+   - 这是云解析的唯一凭据，免费额度每账号每天 2000 页。
+
+2. **翻译 LLM 的 API key + Base URL**（仅 `--translate` 需要）
+   - **先问用户想用哪家**——工具不绑定服务商，任何 OpenAI 兼容 `/chat/completions` 接口都行。
+     常见选择给用户参考（让他自己定，别替他选）：
+     | 服务商 | 申请入口 | OPENAI_BASE_URL |
+     |---|---|---|
+     | DeepSeek | platform.deepseek.com | `https://api.deepseek.com` |
+     | OpenAI | platform.openai.com | `https://api.openai.com/v1` |
+     | 通义千问(DashScope) | dashscope.aliyun.com | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+     | Moonshot/Kimi | platform.moonshot.cn | `https://api.moonshot.cn/v1` |
+     | 本地 Ollama | 本机 | `http://localhost:11434/v1` |
+   - 引导：去对应平台注册 → 充值/领额度 → 创建 API key → 复制。Base URL 用上表对应值
+     （或服务商文档给的兼容地址）。**不要默认 DeepSeek**——那只是个例子，以用户的选择为准。
+
+3. **飞书自建应用凭据**（推送飞书需要；只想要本地双语 md 可跳过，用 `--prepare-only`）
+   - 引导用户去飞书开放平台 https://open.feishu.cn → 「开发者后台」→ 创建「企业自建应用」：
+     - 拿 **App ID** 和 **App Secret**（应用「凭证与基础信息」页）。
+     - **权限**：给应用开通云文档相关权限（如 `docx:document`、`drive:drive` 读写、上传素材）。
+     - **目标文件夹 token**：在飞书云空间打开要存文档的文件夹，URL 末段那串就是
+       `FEISHU_FOLDER_TOKEN`；并把该文件夹分享给这个应用（或应用所属群）有编辑权限。
+   - 这步最容易卡在「权限没开」「文件夹没共享给应用」，推送失败先回这里查。
+
+> 拿全（或拿到本次要用的）凭据后，按下面写进环境变量。**你不要编造任何 key，也不要把密钥
+> 回显到对话里**；让用户自己粘贴值，你只负责把变量名设对。
+
+凭据走**环境变量**，新终端自动读，无需带参。
 
 Windows (PowerShell，写入用户级、永久生效)：
 ```powershell
 [Environment]::SetEnvironmentVariable('FEISHU_APP_ID','<用户的>','User')
 [Environment]::SetEnvironmentVariable('FEISHU_APP_SECRET','<用户的>','User')
 [Environment]::SetEnvironmentVariable('FEISHU_FOLDER_TOKEN','<用户的>','User')   # 目标文件夹 token
-# 翻译（DeepSeek 等 OpenAI 兼容服务），仅 --translate 时需要
+# 翻译用，仅 --translate 时需要。BASE_URL 填你选的服务商地址（下例用 DeepSeek，可换任意 OpenAI 兼容服务）
 [Environment]::SetEnvironmentVariable('OPENAI_API_KEY','<用户的>','User')
-[Environment]::SetEnvironmentVariable('OPENAI_BASE_URL','https://api.deepseek.com','User')
+[Environment]::SetEnvironmentVariable('OPENAI_BASE_URL','<服务商地址，如 https://api.deepseek.com>','User')
 ```
 设完**让用户新开一个终端**（用户级环境变量对已开终端不生效）。
 
@@ -301,8 +338,8 @@ cat >> ~/.bashrc <<'EOF'
 export FEISHU_APP_ID="<用户的>"
 export FEISHU_APP_SECRET="<用户的>"
 export FEISHU_FOLDER_TOKEN="<用户的>"
-export OPENAI_API_KEY="<用户的>"          # 翻译用，仅 --translate 时需要
-export OPENAI_BASE_URL="https://api.deepseek.com"
+export OPENAI_API_KEY="<用户的>"                    # 翻译用，仅 --translate 时需要
+export OPENAI_BASE_URL="<服务商地址，如 https://api.deepseek.com>"   # 任意 OpenAI 兼容服务
 EOF
 source ~/.bashrc
 ```
