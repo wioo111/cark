@@ -68,15 +68,15 @@ nvidia-smi                                              # 有输出=有 N 卡；
 ## 阶段 1：取得 paper2lark 仓库本体
 
 如果用户还没 clone，先拿到仓库。仓库很轻（只有脚本+文档，不含模型/venv）。
-约定一个工作根目录 `<REPO_ROOT>`，让 paper2lark 仓库位于 `<REPO_ROOT>/mineru-workbench`。
+clone 下来的目录（默认 `Paper2Lark`）就是工作根目录，下文记作 `<REPO_ROOT>`——
+脚本、配置、SKILL.md 都直接在它下面，没有额外嵌套层。
 
 ```bash
-# 示例；按用户实际选的目录来
-git clone <paper2lark repo url> <REPO_ROOT>/mineru-workbench
-cd <REPO_ROOT>/mineru-workbench
+git clone https://github.com/wioo111/Paper2Lark.git
+cd Paper2Lark
 ```
 
-之后所有命令默认在 `<REPO_ROOT>/mineru-workbench` 下执行。
+之后所有命令默认在 `<REPO_ROOT>`（即 clone 出的 `Paper2Lark` 目录）下执行。
 
 ---
 
