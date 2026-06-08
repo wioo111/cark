@@ -5,33 +5,50 @@
 解析（MinerU）→ 阅读顺序线性化 → 双语翻译（DeepSeek）→ 推送为飞书 docx，
 公式、图片、表格一并保留。面向需要快速做"论文导读"的研究者与团队。
 
+## 两种解析后端（先了解，再决定怎么装）
+
+PDF 解析支持两种后端，用 `--backend` 切换，**多数人用云 API 即可，无需任何本地模型**：
+
+| | ☁️ 云 API（`--backend cloud`，推荐） | 💻 本地（`--backend local`，默认） |
+|---|---|---|
+| 模型下载 | **零**（调 MinerU 官方在线服务） | 约 14GB（下到本机） |
+| GPU | **不需要** | 需要 NVIDIA GPU |
+| 平台 | Windows / macOS / Linux | 主要 Windows（含一套稳定性加固） |
+| 依赖 | 仅 `requests` | MinerU + CUDA torch 全套 |
+| 数据 | 论文上传到 MinerU 服务器解析 | 数据不出本机、可离线 |
+| 额度 | 每账号每天 2000 页，单文件 ≤200MB/600 页 | 受本机算力限制 |
+| 凭据 | 一个 MinerU API token | 无 |
+
+两种后端产出的 `content_list.json` 结构一致，下游线性化/翻译/飞书链路完全共用。
+**论文敏感不能外传、或要离线/批量跑很多篇**才需要本地后端；否则云 API 门槛最低、最快见效。
+
 ## 安装方式：Skill Download（实验性范式）
 
 本项目实践一种 AI 时代的本地软件安装范式 —— **Skill Download**：
 不再分发"配置好的 exe / 压缩包"，而是把**安装与配置的方法**整理成一份
 可被 AI 执行的 `SKILL.md`。你把它喂给具备命令执行能力的 AI 助手（如 Claude Code），
-用自然语言说明需求，AI 会在对话中替你完成环境探测、依赖安装、模型下载、
+用自然语言说明需求，AI 会在对话中替你完成环境探测、依赖安装、（本地后端才需的）模型下载、
 凭据配置与跑通验证。
 
-- **为什么这么做**：本项目依赖 MinerU + 约 14GB 模型 + GPU 环境，传统打包既臃肿又
-  难适配各人的机器。把"怎么装"交给 AI 现场执行，仓库本身就能保持极轻量
-  （clone 下来只有脚本和文档，不含模型、不含虚拟环境）。
+- **为什么这么做**：把"怎么装"交给 AI 现场执行，仓库本身保持极轻量
+  （clone 下来只有脚本和文档，不含模型、不含虚拟环境）。云后端连模型都不必下，
+  装起来就是建个轻量 venv + 配一个 token。
 - **边界（诚实说明）**：① 需要一个能执行 shell 的 agentic AI；没有的话，下面保留了
-  完整的手动安装步骤作为 fallback。② 14GB 模型必须下载，这是物理现实，Skill 能做的是
-  让过程无痛、可验证，而不是让它消失。
+  完整的手动安装步骤作为 fallback。② 选**本地后端**时那约 14GB 模型必须下载，这是物理现实，
+  Skill 能做的是让过程无痛、可验证；选**云后端**则没有这一步。
 
-> 安装向导见仓库根目录的 [`SKILL.md`](SKILL.md)：分阶段（环境探测 → 安装 MinerU →
-> 应用 Windows 补丁 → 下载模型 → 配置凭据 → 体检跑通），把它喂给具备命令执行能力的
-> AI 助手即可交互式安装。没有 agentic AI 的用户，按下面"手动安装"步骤操作。
+> 安装向导见仓库根目录的 [`SKILL.md`](SKILL.md)：先选后端，云 API（零模型、跨平台）或本地部署，
+> 再分阶段（环境/续装探测 → 装环境 →（本地才需）补丁/下模型 → 配凭据 → 跑通验收）。
+> 把它喂给具备命令执行能力的 AI 助手即可交互式安装；没有 agentic AI 的用户，按下面"手动安装"操作。
 
 ## 致谢与依赖
 
 本项目是上层编排工具，**站在两个上游项目的肩膀上**：
 
 - **[MinerU](https://github.com/opendatalab/MinerU)**（Apache-2.0）：负责 PDF → 结构化
-  内容的解析。paper2lark 通过其命令行 `mineru` 调用它，**不修改、不分发其源码**；
-  用户按提示自行 `pip install mineru`。仓库 `patches/` 下附带一个可选的 Windows
-  稳定性小补丁（见该目录说明）。
+  内容的解析。云后端通过其官方在线 API（`mineru.net`）调用，本机不装；本地后端则
+  **不修改、不分发其源码**，用户按提示自行 `pip install mineru`。仓库 `patches/` 下附带
+  一个可选的 Windows 稳定性小补丁（仅本地后端用，见该目录说明）。
 - **[Hermes-academy](https://github.com/dylanshaw338-create/Hermes-academy)**：
   本项目"PDF→翻译→协作平台"整体思路上的灵感来源之一。paper2lark 未使用其代码，
   为独立实现。
@@ -98,13 +115,39 @@ onnxruntime 能否快速导入、torch 是否 CUDA 版且 GPU 可见、有无残
 - `scripts/run-mineru-pipeline.ps1`: 使用 `pipeline` 后端执行解析
 - `runtime/`: 所有缓存、模型、输出目录
 
-## 首次安装
+## 快速开始（云 API，推荐，无需下模型）
+
+只需轻量 venv + 一个 token，Windows/macOS/Linux 通用：
+
+```bash
+# 1) 建轻量 venv，只装 requests（不装 mineru、不下模型、不要 GPU）
+uv venv .venv --python 3.12 --seed
+.venv/Scripts/pip.exe install requests       # mac/Linux: ./.venv/bin/pip install requests
+
+# 2) 配 token（在 https://mineru.net 申请）。Windows 用 setx / 用户级环境变量，mac/Linux 写进 ~/.bashrc
+export MINERU_API_TOKEN="<你的token>"
+
+# 3) 跑通（云后端）
+.venv/Scripts/python.exe scripts/pdf_to_feishu_docx.py \
+  --input-pdf "path/to/paper.pdf" --title "论文导读：示例" \
+  --backend cloud --model-version vlm --translate
+```
+
+飞书/翻译凭据见下方「配置凭据」。完整交互式安装走 [`SKILL.md`](SKILL.md)。
+
+---
+
+## 本地后端安装（仅当需要离线/数据不外传，要下约 14GB 模型）
+
+> 以下「首次安装 / 下载模型 / 解析 PDF」**仅本地后端需要**。用云 API 的请跳过整段。
+
+### 首次安装
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-mineru.ps1
 ```
 
-## 下载模型
+### 下载模型（约 14GB）
 
 默认下载 `pipeline` 模型，并使用 `ModelScope` 作为模型源：
 
@@ -118,7 +161,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -ModelType vlm
 ```
 
-## 解析 PDF
+### 解析 PDF（本地后端的底层脚本）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run-mineru-pipeline.ps1 `
@@ -133,7 +176,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-mineru-pipeline.ps1 `
   -OutputPath "D:\path\to\output"
 ```
 
-## 当前策略
+## 当前策略（本地后端的模型选择）
+
+> 仅与本地后端相关；云后端用 `--model-version` 在线切 pipeline/vlm，本机不存模型。
 
 - 先安装 `pipeline` 版本，降低磁盘占用和安装复杂度
 - 先验证双栏论文的阅读顺序、标题、图片和公式表现
