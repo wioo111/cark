@@ -44,6 +44,39 @@ paper2lark 把一篇学术论文 PDF，一键变成**带中英对照的飞书（
 
 ---
 
+## 阶段 0.5：续装探测（中断重来时先看装到哪了，别从头瞎装）
+
+安装常被打断（下模型最易断网、用户关机、token 没配等）。**重新进入这个 Skill 时，先跑下面
+这组只读探测，判断已经到哪一步，从断点接着做，而不是重头再来。** 全程不改任何东西。
+
+```bash
+# 在 clone 出的仓库根目录（Paper2Lark）下执行
+test -d .venv && echo "✓ venv 已建" || echo "✗ venv 未建 → 从阶段 2 开始"
+
+# venv 里装了什么后端依赖（Windows 用 .venv/Scripts/python.exe，mac/Linux 用 .venv/bin/python）
+PY=.venv/Scripts/python.exe; [ -f "$PY" ] || PY=.venv/bin/python
+"$PY" -c "import requests; print('✓ requests 已装（云后端就绪）')" 2>/dev/null || echo "✗ requests 未装"
+"$PY" -c "import mineru; print('✓ mineru 已装（本地后端就绪）')" 2>/dev/null || echo "✗ mineru 未装（云后端不需要）"
+
+# 凭据/ token 设了没（只看有没有，不回显值）
+for v in MINERU_API_TOKEN FEISHU_APP_ID FEISHU_APP_SECRET FEISHU_FOLDER_TOKEN OPENAI_API_KEY; do
+  if [ -n "${!v}" ]; then echo "✓ $v 已设"; else echo "✗ $v 未设"; fi
+done
+
+# 本地后端：模型下全了没（云后端跳过这条）
+test -f config/mineru.json && echo "✓ config/mineru.json 存在（模型路径已写回）" || echo "✗ 模型未下/未配"
+```
+
+据此决策接续点：
+- **venv 未建** → 用户选好后端，从阶段 2A（云）或 2B（本地）开始。
+- **venv 已建、requests 已装、token 已设** → 云后端环境就绪，直接跳阶段 6 跑通。
+- **venv 已建但 mineru 未装/模型未下** → 本地后端没装完，回阶段 2B / 阶段 4 续上（模型下载可续传，重跑同一命令即可）。
+- **环境都就绪，只是没配飞书凭据** → 阶段 6 先用 `--prepare-only` 验证解析+翻译，配好凭据再推飞书。
+
+> 这一步是为了**幂等**：已经装好的别重装，断在哪接哪。讲清楚现状再动手，别默默重跑耗时步骤。
+
+---
+
 ## 阶段 0：环境探测（先看清现场，再决定怎么装）
 
 不要假设，先跑探测。把每一项结果讲给用户。**探测内容取决于用户选了哪种后端。**
@@ -80,24 +113,42 @@ cd Paper2Lark
 
 ---
 
-## 阶段 2A：云 API 安装（推荐路径，零模型下载）
+## 阶段 2A：云 API 安装（推荐路径，零模型下载，跨平台）
 
 如果用户选了云 API，这一段就是全部安装步骤，**跳过阶段 2B / 3 / 4**（那些是本地部署专属）。
+云后端只依赖 `requests`，**Windows / macOS / Linux 都能跑**——按用户的系统选下面对应的命令。
 
 1. 建一个轻量 venv，**只装 `requests`**（不装 mineru、不下模型、不要 GPU）：
 
+   Windows (PowerShell)：
    ```powershell
    uv python install 3.12
    uv venv .venv --python 3.12 --seed
    .\.venv\Scripts\pip.exe install requests
    ```
 
+   macOS / Linux (bash)：
+   ```bash
+   uv python install 3.12
+   uv venv .venv --python 3.12 --seed
+   ./.venv/bin/pip install requests
+   ```
+   > 之后所有 `.\.venv\Scripts\python.exe`（Windows）在 mac/Linux 上对应
+   > `./.venv/bin/python`，下文不再重复两套，按系统换 venv 路径即可。
+
 2. 配 MinerU API token（在 https://mineru.net 申请；token 走环境变量，不要写进文件）：
 
+   Windows (PowerShell，写入用户级、永久生效)：
    ```powershell
    [Environment]::SetEnvironmentVariable('MINERU_API_TOKEN','<用户的token>','User')
    ```
    设完让用户**新开一个终端**（用户级环境变量对已开终端不生效）。
+
+   macOS / Linux (bash，追加到 shell 配置永久生效)：
+   ```bash
+   echo 'export MINERU_API_TOKEN="<用户的token>"' >> ~/.bashrc   # zsh 用 ~/.zshrc
+   source ~/.bashrc
+   ```
 
 3. 直接跳到阶段 5 配飞书/翻译凭据，再到阶段 6 用 `--backend cloud` 跑通。
 
@@ -230,9 +281,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -Source m
 
 ## 阶段 5：配置凭据（飞书 + 翻译）
 
-凭据走**环境变量**，开发机存在 Windows 用户级环境变量里，新终端自动读，无需带参。
-帮用户设（值由用户提供，你不要编造，也不要把密钥回显到对话里）：
+凭据走**环境变量**，新终端自动读，无需带参。值由用户提供，你不要编造，也不要把密钥回显到对话里。
 
+Windows (PowerShell，写入用户级、永久生效)：
 ```powershell
 [Environment]::SetEnvironmentVariable('FEISHU_APP_ID','<用户的>','User')
 [Environment]::SetEnvironmentVariable('FEISHU_APP_SECRET','<用户的>','User')
@@ -241,8 +292,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\download-models.ps1 -Source m
 [Environment]::SetEnvironmentVariable('OPENAI_API_KEY','<用户的>','User')
 [Environment]::SetEnvironmentVariable('OPENAI_BASE_URL','https://api.deepseek.com','User')
 ```
-
 设完**让用户新开一个终端**（用户级环境变量对已开终端不生效）。
+
+macOS / Linux (bash，追加到 shell 配置；zsh 改 `~/.zshrc`)：
+```bash
+cat >> ~/.bashrc <<'EOF'
+export FEISHU_APP_ID="<用户的>"
+export FEISHU_APP_SECRET="<用户的>"
+export FEISHU_FOLDER_TOKEN="<用户的>"
+export OPENAI_API_KEY="<用户的>"          # 翻译用，仅 --translate 时需要
+export OPENAI_BASE_URL="https://api.deepseek.com"
+EOF
+source ~/.bashrc
+```
+
 没飞书凭据也能继续——阶段 6 用 `--prepare-only` 只产出本地文件，不碰飞书 API。
 云 API 用户的 `MINERU_API_TOKEN` 也在这里一并确认已设（阶段 2A 已设过则跳过）。
 
@@ -286,7 +349,9 @@ torch 是否 CUDA 版且 GPU 可见、有无残留 fast_api 进程。退出码 0
   --backend cloud --model-version vlm `
   --translate --prepare-only
 ```
-（token 已在阶段 2A 写进 `MINERU_API_TOKEN`，无需带参；也可显式 `--api-token`。）
+（token 已在阶段 2A 写进 `MINERU_API_TOKEN`，无需带参；也可显式 `--api-token`。
+mac/Linux 把 `.\.venv\Scripts\python.exe` 换成 `./.venv/bin/python`、续行符 `` ` `` 换成 `\`、
+路径用正斜杠即可。）
 
 **本地部署**：不加 `--backend` 即默认 local：
 
