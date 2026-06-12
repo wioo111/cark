@@ -29,6 +29,7 @@ runtime/inputs/
 .env
 *.secret
 config/*local*.json
+config/gui_settings.json
 # MinerU 下载器生成的本地配置（含本机绝对模型路径），用 config/mineru.example.json 作模板
 config/mineru.json
 
@@ -42,3 +43,4 @@ Thumbs.db
 
 # ===== 内部调试记录（含本机绝对路径，不公开；价值已沉淀进 README/开发文档） =====
 docs/mineru_windows_gpu_debug_report_20260608.md
+.trae/
