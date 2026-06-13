@@ -1,12 +1,12 @@
 param(
-    [switch]$SkipPathUpdate
+    [switch]$SkipPathUpdate,
+    [switch]$SkipGuiBuild
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$VenvPip = Join-Path $RepoRoot ".venv\Scripts\pip.exe"
 $VenvScripts = Join-Path $RepoRoot ".venv\Scripts"
 
 function Ensure-Command {
@@ -21,6 +21,9 @@ function Ensure-Command {
 }
 
 Ensure-Command -CommandName "uv" -InstallHint "Please install uv first."
+if (-not $SkipGuiBuild) {
+    Ensure-Command -CommandName "npm" -InstallHint "Please install Node.js 22.12 or newer first."
+}
 
 Push-Location $RepoRoot
 try {
@@ -29,7 +32,28 @@ try {
         uv venv .venv --python 3.12 --seed
     }
 
-    & $VenvPip install -e .
+    & $VenvPython -m pip install -e .
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python package installation failed."
+    }
+
+    if (-not $SkipGuiBuild) {
+        Push-Location (Join-Path $RepoRoot "gui")
+        try {
+            & npm ci
+            if ($LASTEXITCODE -ne 0) {
+                throw "Frontend dependency installation failed."
+            }
+
+            & npm run build
+            if ($LASTEXITCODE -ne 0) {
+                throw "Frontend build failed."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
 
     if (-not $SkipPathUpdate) {
         $currentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")

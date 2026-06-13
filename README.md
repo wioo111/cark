@@ -100,7 +100,20 @@ cark docx ".\runtime\output\<task-id>\<paper>\auto\<paper>_content_list.json"
 - **CLI still matters**：CLI 继续服务批处理、调试和自动化
 - **local-first**：优先保证本地可读、可控、可沉淀
 - **透明处理**：上传后能看到过程，不用只等结果
-- **本地优先**：上传、处理、阅读和沉淀都先在本地完成
+
+## 仓库结构
+
+```text
+cli.py       命令行入口与任务编排
+config/      可提交的配置模板
+gui/         React 阅读工作台
+scripts/     解析、翻译、导出与本地服务
+patches/     独立的兼容性补丁
+runtime/     本地论文和运行产物，不进入 Git
+docs/        架构与开发说明
+```
+
+开发环境、检查命令和分支规范见 [开发文档](docs/DEVELOPMENT.md)，模块边界见 [架构文档](docs/ARCHITECTURE.md)。
 
 ## 当前阶段
 
@@ -114,6 +127,8 @@ cark docx ".\runtime\output\<task-id>\<paper>\auto\<paper>_content_list.json"
 - MinerU 本地 / 云端双后端接入
 - 翻译与扩展导出链路已接通
 
-还会继续推进的方向：的连接测试
+接下来会继续推进：
 
-- 更强的共读与沉淀能力
+- 真正可连续追问的智能体共读
+- 可查看、纠正和删除的长期知识沉淀
+- SQLite 持久化与任务恢复
