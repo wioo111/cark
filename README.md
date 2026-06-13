@@ -110,10 +110,21 @@ gui/         React 阅读工作台
 scripts/     解析、翻译、导出与本地服务
 patches/     独立的兼容性补丁
 runtime/     本地论文和运行产物，不进入 Git
-docs/        架构与开发说明
 ```
 
-开发环境、检查命令和分支规范见 [开发文档](docs/DEVELOPMENT.md)，模块边界见 [架构文档](docs/ARCHITECTURE.md)。
+运行数据、凭据、本机配置和生成文件不要提交。`main` 是唯一长期分支，功能开发使用短期分支，合并后删除。
+
+开发检查：
+
+```powershell
+cd gui
+npm run lint
+npm test
+npm run build
+
+cd ..
+python -m compileall -q cli.py scripts
+```
 
 ## 当前阶段
 
