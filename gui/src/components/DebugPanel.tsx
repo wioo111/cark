@@ -41,7 +41,7 @@ export function DebugPanel({ detail }: DebugPanelProps) {
           </div>
           <div>
             <p className="text-xs uppercase tracking-[0.22em] text-emerald-500/80">第三方平台整合</p>
-            <h3 className="font-serif text-lg text-emerald-100/90">Lark Integration</h3>
+            <h3 className="font-serif text-lg text-emerald-100/90">协作平台导出</h3>
           </div>
         </div>
         
@@ -71,7 +71,7 @@ export function DebugPanel({ detail }: DebugPanelProps) {
             </div>
           ) : (
             <div className="rounded-[20px] border border-dashed border-white/10 bg-black/20 p-4 text-sm text-zinc-500">
-              还没有生成第三方发布稿。需要时再从命令行导出。
+              还没有生成协作平台稿。需要时再手动导出。
             </div>
           )}
         </div>

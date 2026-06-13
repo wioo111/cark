@@ -171,7 +171,7 @@ export default function Home() {
       settings.mineru.backend === 'local' ? '本地 MinerU' : '云端 MinerU',
       `解析 ${settings.mineru.parseMethod}`,
       settings.translation.enabled ? '双语已开' : '双语关闭',
-      settings.publish.prepareOnly ? '只做本地产物' : '自动发飞书',
+      settings.publish.prepareOnly ? '只做本地产物' : '自动导出协作稿',
     ]
   }, [settings])
 
@@ -622,12 +622,12 @@ export default function Home() {
                         value: maskSecret(draftSettings.translation.apiKey),
                       },
                       {
-                        label: '飞书发布',
+                        label: '协作平台导出',
                         configured:
                           Boolean(draftSettings.publish.folderToken.trim()) &&
                           Boolean(draftSettings.publish.appId.trim()) &&
                           Boolean(draftSettings.publish.appSecret.trim()),
-                        value: draftSettings.publish.prepareOnly ? '当前仅本地产物' : '已启用自动发布',
+                        value: draftSettings.publish.prepareOnly ? '当前仅本地产物' : '已启用自动导出',
                       },
                       {
                         label: '共读模型',
@@ -884,7 +884,7 @@ export default function Home() {
                 </section>
 
                 <section className="rounded-[28px] border border-white/8 bg-white/[0.03] p-5">
-                  <h3 className="font-serif text-xl text-zinc-100">飞书发布</h3>
+                  <h3 className="font-serif text-xl text-zinc-100">协作平台导出</h3>
                   <label className="mt-4 flex items-center gap-3 text-sm text-zinc-300">
                     <input
                       type="checkbox"
@@ -894,7 +894,7 @@ export default function Home() {
                       }
                       className="h-4 w-4 rounded border-white/20 bg-black/20"
                     />
-                    只做本地产物，不自动发布飞书
+                    只做本地产物，不自动导出到协作平台
                   </label>
 
                   <div className="mt-4 grid gap-4 md:grid-cols-2">

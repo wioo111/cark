@@ -498,7 +498,7 @@ def build_task_command(file_path: Path, settings: dict[str, object]) -> tuple[li
         }
         missing = [label for key, label in required.items() if not str(publish_settings.get(key) or "").strip()]
         if missing:
-            raise ValueError("飞书发布已启用，但缺少: " + "、".join(missing))
+            raise ValueError("协作平台导出已启用，但缺少: " + "、".join(missing))
 
     script_path = WORKBENCH_ROOT / "scripts" / "pdf_to_feishu_docx.py"
     command = [
@@ -546,7 +546,7 @@ def detect_stdout_stage(line: str) -> tuple[Optional[str], Optional[int]]:
     if "translating" in lowered or "翻译" in line:
         return "双语翻译", 72
     if "document_url" in line or "document_token" in line:
-        return "飞书发布", 92
+        return "协作平台导出", 92
     if "linearized_markdown" in line or "prepared_markdown" in line:
         return "整理产物", 84
     return None, None
