@@ -1,7 +1,10 @@
 import argparse
+import html
 import json
 import os
+import re
 import sys
+import uuid
 from pathlib import Path
 
 import requests
@@ -16,6 +19,10 @@ from upload_md_to_feishu import FeishuApiError, get_tenant_access_token, parse_j
 
 
 OPEN_FEISHU = "https://open.feishu.cn"
+HTML_TABLE_RE = re.compile(r"<table\b[^>]*>(.*?)</table>", re.IGNORECASE | re.DOTALL)
+HTML_ROW_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+HTML_CELL_RE = re.compile(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", re.IGNORECASE | re.DOTALL)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def parse_args():
@@ -136,25 +143,23 @@ def sanitize_block_for_create(block):
 
 
 def create_nested_blocks(access_token, document_id, first_level_ids, blocks):
-    batches = build_block_batches(first_level_ids, blocks, max_descendants=1000)
-    results = []
-    for batch_index, batch in enumerate(batches):
-        response = requests.post(
-            f"{OPEN_FEISHU}/open-apis/docx/v1/documents/{document_id}/blocks/{document_id}/descendant",
-            headers=build_headers(access_token),
-            params={"document_revision_id": -1},
-            json={
-                "index": 0 if batch_index == 0 else -1,
-                "children_id": batch["children_id"],
-                "descendants": batch["descendants"],
-            },
-            timeout=120,
-        )
-        payload = parse_json_response(response, f"写入飞书原生块（第 {batch_index + 1} 批）")
-        if payload.get("code", -1) != 0:
-            raise FeishuApiError(f"写入飞书原生块失败: {payload}")
-        results.append(payload.get("data", {}))
-    return results
+    first_level_ids, blocks = split_oversized_top_level_tables(
+        first_level_ids,
+        blocks,
+        max_descendants=1000,
+        table_split_descendants=400,
+    )
+    by_id = {block["block_id"]: sanitize_block_for_create(block) for block in blocks}
+    children_map = {block_id: list(block.get("children", [])) for block_id, block in by_id.items()}
+    return append_block_children(
+        access_token=access_token,
+        document_id=document_id,
+        parent_block_id=document_id,
+        child_ids=first_level_ids,
+        by_id=by_id,
+        children_map=children_map,
+        max_descendants=1000,
+    )
 
 
 def collect_subtree_ids(block_id, children_map):
@@ -164,20 +169,172 @@ def collect_subtree_ids(block_id, children_map):
     return subtree
 
 
-def build_block_batches(first_level_ids, blocks, max_descendants):
+def split_table_row_groups(root_id, block, by_id, children_map, max_descendants):
+    table = block.get("table", {})
+    prop = table.get("property", {}) if isinstance(table, dict) else {}
+    column_size = prop.get("column_size")
+    children = list(block.get("children", []))
+    if not column_size or column_size <= 0 or len(children) % column_size != 0:
+        return None
+
+    row_groups = []
+    current_rows = []
+    current_size = 1
+    for offset in range(0, len(children), column_size):
+        row_cell_ids = children[offset: offset + column_size]
+        row_size = sum(len(collect_subtree_ids(cell_id, children_map)) for cell_id in row_cell_ids)
+        if current_rows and current_size + row_size > max_descendants:
+            row_groups.append(current_rows)
+            current_rows = []
+            current_size = 1
+        current_rows.append(row_cell_ids)
+        current_size += row_size
+
+    if current_rows:
+        row_groups.append(current_rows)
+
+    if len(row_groups) <= 1:
+        return None
+
+    split_blocks = []
+    split_root_ids = []
+    for group_index, rows in enumerate(row_groups):
+        child_ids = [cell_id for row in rows for cell_id in row]
+        target_root_id = root_id if group_index == 0 else str(uuid.uuid4())
+        new_block = dict(block)
+        new_block["block_id"] = target_root_id
+        new_block["children"] = child_ids
+        new_table = dict(table)
+        new_prop = dict(prop)
+        new_prop["row_size"] = len(rows)
+        new_table["property"] = new_prop
+        new_block["table"] = new_table
+        split_blocks.append(new_block)
+        split_root_ids.append(target_root_id)
+
+    return split_root_ids, split_blocks
+
+
+def split_oversized_top_level_tables(first_level_ids, blocks, max_descendants, table_split_descendants):
     by_id = {block["block_id"]: sanitize_block_for_create(block) for block in blocks}
     children_map = {block_id: list(block.get("children", [])) for block_id, block in by_id.items()}
+    updated_blocks = {block["block_id"]: dict(block) for block in blocks}
+    updated_first_level_ids = []
+
+    for root_id in first_level_ids:
+        block = by_id.get(root_id)
+        if not block:
+            updated_first_level_ids.append(root_id)
+            continue
+
+        subtree_size = len(collect_subtree_ids(root_id, children_map))
+        if block.get("block_type") != 31:
+            updated_first_level_ids.append(root_id)
+            continue
+
+        if subtree_size <= table_split_descendants:
+            updated_first_level_ids.append(root_id)
+            continue
+
+        split_result = split_table_row_groups(root_id, block, by_id, children_map, table_split_descendants)
+        if not split_result:
+            updated_first_level_ids.append(root_id)
+            continue
+
+        split_root_ids, split_blocks = split_result
+        updated_first_level_ids.extend(split_root_ids)
+        updated_blocks[root_id] = split_blocks[0]
+        for extra_block in split_blocks[1:]:
+            updated_blocks[extra_block["block_id"]] = extra_block
+
+    return updated_first_level_ids, list(updated_blocks.values())
+
+
+def normalize_html_cell_text(cell_html):
+    text = HTML_TAG_RE.sub(" ", cell_html)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def flatten_html_tables(markdown_text):
+    def replace_table(match):
+        rows = []
+        for row_html in HTML_ROW_RE.findall(match.group(0)):
+            cells = [normalize_html_cell_text(cell) for cell in HTML_CELL_RE.findall(row_html)]
+            cells = [cell for cell in cells if cell]
+            if cells:
+                rows.append(cells)
+
+        if not rows:
+            return match.group(0)
+
+        lines = ["### Table Fallback", ""]
+        header = rows[0]
+        data_rows = rows[1:] if len(rows) > 1 else []
+
+        if len(header) >= 2:
+            lines.append(f"- Columns: {header[0]} | {header[1]}")
+        else:
+            lines.append(f"- Columns: {' | '.join(header)}")
+
+        for index, row in enumerate(data_rows, start=1):
+            if len(row) == 1:
+                lines.append(f"- Row {index}: {row[0]}")
+            else:
+                lines.append(f"- Row {index}: {row[0]} -> {row[1]}")
+        lines.append("")
+        return "\n".join(lines)
+
+    return HTML_TABLE_RE.sub(replace_table, markdown_text)
+
+
+def create_descendant_batch(access_token, document_id, parent_block_id, children_id, descendants, batch_label, index):
+    response = requests.post(
+        f"{OPEN_FEISHU}/open-apis/docx/v1/documents/{document_id}/blocks/{parent_block_id}/descendant",
+        headers=build_headers(access_token),
+        params={"document_revision_id": -1},
+        json={
+            "index": index,
+            "children_id": children_id,
+            "descendants": descendants,
+        },
+        timeout=120,
+    )
+    payload = parse_json_response(response, batch_label)
+    if payload.get("code", -1) != 0:
+        raise FeishuApiError(f"{batch_label}失败: {payload}")
+    return payload.get("data", {})
+
+
+def block_id_relations_map(batch_result):
+    relations = batch_result.get("block_id_relations", [])
+    return {
+        relation["temporary_block_id"]: relation["block_id"]
+        for relation in relations
+        if relation.get("temporary_block_id") and relation.get("block_id")
+    }
+
+
+def clone_root_only_block(block):
+    root_block = dict(block)
+    root_block["children"] = []
+    return root_block
+
+
+def is_invalid_parent_children_error(exc):
+    text = str(exc)
+    return "1770030" in text or "invalid parent children relation" in text
+
+
+def build_block_batches(child_ids, by_id, children_map, max_descendants):
     batches = []
     current_child_ids = []
     current_descendants = []
 
-    for root_id in first_level_ids:
+    for root_id in child_ids:
         subtree_ids = collect_subtree_ids(root_id, children_map)
         subtree_blocks = [by_id[subtree_id] for subtree_id in subtree_ids]
-
-        if len(subtree_blocks) > max_descendants:
-            raise FeishuApiError(f"单个顶层块子树超过 {max_descendants} 个节点，暂不支持自动拆分: {root_id}")
-
         if current_descendants and len(current_descendants) + len(subtree_blocks) > max_descendants:
             batches.append({"children_id": current_child_ids, "descendants": current_descendants})
             current_child_ids = []
@@ -192,12 +349,95 @@ def build_block_batches(first_level_ids, blocks, max_descendants):
     return batches
 
 
+def append_block_children(access_token, document_id, parent_block_id, child_ids, by_id, children_map, max_descendants):
+    results = []
+    pending_child_ids = []
+    pending_descendants = []
+    next_index = 0
+
+    def emit_batch(batch_child_ids, batch_descendants, batch_label):
+        nonlocal next_index
+        result = create_descendant_batch(
+            access_token=access_token,
+            document_id=document_id,
+            parent_block_id=parent_block_id,
+            children_id=batch_child_ids,
+            descendants=batch_descendants,
+            batch_label=batch_label,
+            index=next_index,
+        )
+        next_index = -1
+        results.append(result)
+        return result
+
+    def flush_pending():
+        nonlocal pending_child_ids, pending_descendants
+        if not pending_child_ids:
+            return
+        try:
+            emit_batch(
+                pending_child_ids,
+                pending_descendants,
+                f"写入飞书原生块（父块 {parent_block_id}，子树数 {len(pending_child_ids)}）",
+            )
+        except FeishuApiError as exc:
+            if len(pending_child_ids) == 1 or not is_invalid_parent_children_error(exc):
+                raise
+            for child_id in pending_child_ids:
+                subtree_ids = collect_subtree_ids(child_id, children_map)
+                subtree_blocks = [by_id[subtree_id] for subtree_id in subtree_ids]
+                emit_batch(
+                    [child_id],
+                    subtree_blocks,
+                    f"写入飞书原生块（父块 {parent_block_id}，单根重试 {child_id}）",
+                )
+        pending_child_ids = []
+        pending_descendants = []
+
+    for root_id in child_ids:
+        subtree_ids = collect_subtree_ids(root_id, children_map)
+        subtree_blocks = [by_id[subtree_id] for subtree_id in subtree_ids]
+        if len(subtree_blocks) <= max_descendants:
+            if pending_descendants and len(pending_descendants) + len(subtree_blocks) > max_descendants:
+                flush_pending()
+            pending_child_ids.append(root_id)
+            pending_descendants.extend(subtree_blocks)
+            continue
+
+        flush_pending()
+        root_only_result = emit_batch(
+            [root_id],
+            [clone_root_only_block(by_id[root_id])],
+            f"创建超大块根节点 {root_id}",
+        )
+
+        created_root_id = block_id_relations_map(root_only_result).get(root_id)
+        if not created_root_id:
+            raise FeishuApiError(f"创建超大块根节点成功但未返回 block_id: {root_id}")
+
+        child_results = append_block_children(
+            access_token=access_token,
+            document_id=document_id,
+            parent_block_id=created_root_id,
+            child_ids=children_map.get(root_id, []),
+            by_id=by_id,
+            children_map=children_map,
+            max_descendants=max_descendants,
+        )
+        results.extend(child_results)
+
+    flush_pending()
+    return results
+
+
 def prepare_markdown(markdown_path, image_mode):
     # This is imported from upload_md_to_feishu, but we'll override it here 
     # to inject the Hermes-style academic template.
     from upload_md_to_feishu import prepare_markdown as original_prepare
     prepared_markdown, local_images = original_prepare(markdown_path, image_mode)
     
+    prepared_markdown = flatten_html_tables(prepared_markdown)
+
     # Inject Hermes-style academic template at the top
     title = markdown_path.stem.replace("_feishu_docx_ready", "").replace("_linearized", "").replace("_bilingual", "")
     
