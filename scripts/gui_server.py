@@ -1,11 +1,13 @@
 import argparse
 import base64
+import importlib.util
 import json
 import mimetypes
 import os
 import queue
 import re
 import requests
+import shutil
 import socket
 import subprocess
 import sys
@@ -21,12 +23,15 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
+from gui_storage import WorkbenchStore, format_task_command
+
 
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
 GUI_DIST_DIR = WORKBENCH_ROOT / "gui" / "dist"
 CONFIG_DIR = WORKBENCH_ROOT / "config"
 RUNTIME_OUTPUT_DIR = WORKBENCH_ROOT / "runtime" / "output"
 MEMORY_ROOT_DIR = WORKBENCH_ROOT / "runtime" / "memory"
+DATABASE_PATH = WORKBENCH_ROOT / "runtime" / "cark.sqlite3"
 GUI_SETTINGS_PATH = CONFIG_DIR / "gui_settings.json"
 GUI_UPLOADS_DIR = WORKBENCH_ROOT / "runtime" / "uploads" / "gui"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -41,8 +46,7 @@ PROXY_ENV_KEYS = (
     "all_proxy",
     "no_proxy",
 )
-TASKS_LOCK = threading.Lock()
-TASKS: dict[str, dict[str, object]] = {}
+STORE = WorkbenchStore(DATABASE_PATH)
 
 
 @dataclass
@@ -313,6 +317,65 @@ def save_gui_settings(payload: dict[str, object]) -> dict[str, object]:
     return settings
 
 
+def detect_capabilities(settings: Optional[dict[str, object]] = None) -> dict[str, object]:
+    current = settings or load_gui_settings()
+    mineru = current.get("mineru") if isinstance(current.get("mineru"), dict) else {}
+    translation = current.get("translation") if isinstance(current.get("translation"), dict) else {}
+    local_candidates = [
+        WORKBENCH_ROOT / ".venv" / "Scripts" / "mineru.exe",
+        WORKBENCH_ROOT / ".venv" / "bin" / "mineru",
+    ]
+    local_available = any(path.exists() for path in local_candidates)
+    if not local_available:
+        local_available = bool(shutil.which("mineru")) or importlib.util.find_spec("mineru") is not None
+    cloud_configured = bool(str(mineru.get("apiToken") or "").strip())
+    translation_configured = bool(str(translation.get("apiKey") or "").strip())
+
+    issues: list[dict[str, str]] = []
+    backend = str(mineru.get("backend") or "local")
+    if backend == "local" and not local_available:
+        issues.append(
+            {
+                "code": "local-parser-missing",
+                "message": "这台电脑还不能本地解析 PDF。",
+                "action": "切换到云端解析，或重新运行安装脚本补齐本地解析能力。",
+            }
+        )
+    if backend == "cloud" and not cloud_configured:
+        issues.append(
+            {
+                "code": "cloud-token-missing",
+                "message": "云端解析缺少访问凭据。",
+                "action": "在常用设置中填写云端解析 Token。",
+            }
+        )
+    if bool(translation.get("enabled")) and not translation_configured:
+        issues.append(
+            {
+                "code": "translation-key-missing",
+                "message": "双语翻译已开启，但缺少翻译凭据。",
+                "action": "填写翻译 API Key，或关闭双语翻译。",
+            }
+        )
+
+    return {
+        "ready": not issues,
+        "issues": issues,
+        "localParser": {
+            "available": local_available,
+            "message": "可在这台电脑上解析" if local_available else "未检测到本地解析能力",
+        },
+        "cloudParser": {
+            "configured": cloud_configured,
+            "message": "云端凭据已配置" if cloud_configured else "云端凭据未配置",
+        },
+        "translation": {
+            "configured": translation_configured,
+            "message": "翻译凭据已配置" if translation_configured else "翻译凭据未配置",
+        },
+    }
+
+
 def test_mineru_connection(settings: dict[str, object]) -> dict[str, object]:
     mineru = settings.get("mineru") if isinstance(settings.get("mineru"), dict) else {}
     token = str(mineru.get("apiToken") or "").strip()
@@ -402,45 +465,28 @@ def run_connection_test(target: str, settings_payload: dict[str, object]) -> dic
 
 
 def snapshot_task(task_id: str) -> dict[str, object] | None:
-    with TASKS_LOCK:
-        task = TASKS.get(task_id)
-        return json.loads(json.dumps(task, ensure_ascii=False)) if task else None
+    return STORE.get_task(task_id)
 
 
 def list_tasks_payload() -> list[dict[str, object]]:
-    with TASKS_LOCK:
-        items = [json.loads(json.dumps(item, ensure_ascii=False)) for item in TASKS.values()]
-    items.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
-    return items
+    return STORE.list_tasks()
 
 
 def update_task(task_id: str, **changes):
-    with TASKS_LOCK:
-        task = TASKS.get(task_id)
-        if not task:
-            return
-        task.update(changes)
-        task["updatedAt"] = current_timestamp_iso()
+    STORE.update_task(task_id, current_timestamp_iso(), **changes)
 
 
 def append_task_log(task_id: str, line: str, *, stage: Optional[str] = None, progress: Optional[int] = None):
     cleaned = line.rstrip()
     if not cleaned:
         return
-    with TASKS_LOCK:
-        task = TASKS.get(task_id)
-        if not task:
-            return
-        logs = task.setdefault("logs", [])
-        if isinstance(logs, list):
-            logs.append(cleaned)
-            if len(logs) > 240:
-                del logs[:-240]
-        if stage is not None:
-            task["stage"] = stage
-        if progress is not None:
-            task["progress"] = max(0, min(int(progress), 100))
-        task["updatedAt"] = current_timestamp_iso()
+    STORE.append_task_log(
+        task_id,
+        cleaned,
+        current_timestamp_iso(),
+        stage=stage,
+        progress=progress,
+    )
 
 
 def extract_json_result(output_text: str) -> Optional[dict[str, object]]:
@@ -465,7 +511,7 @@ def find_record_for_output(payload: dict[str, object]) -> Optional[PaperRecord]:
     linearized_target = Path(linearized_path).resolve() if isinstance(linearized_path, str) else None
     content_list_target = Path(content_list_path).resolve() if isinstance(content_list_path, str) else None
 
-    for record in discover_records().values():
+    for record in indexed_records(refresh=True).values():
         record_linearized = record.files.get("linearized")
         record_content_list = record.files.get("contentListJson")
         try:
@@ -557,7 +603,7 @@ def run_upload_task(task_id: str, file_path: Path):
         settings = load_gui_settings()
         command, env, mineru_log = build_task_command(file_path, settings)
         update_task(task_id, status="running", stage="准备执行", progress=5)
-        append_task_log(task_id, f"$ {' '.join(command)}", stage="准备执行", progress=5)
+        append_task_log(task_id, f"$ {format_task_command(command)}", stage="准备执行", progress=5)
         process = subprocess.Popen(
             command,
             cwd=str(WORKBENCH_ROOT),
@@ -655,10 +701,24 @@ def create_upload_task(file_name: str, content: bytes) -> dict[str, object]:
         "logs": [f"已接收文件: {safe_name}"],
         "result": None,
     }
-    with TASKS_LOCK:
-        TASKS[task_id] = task
+    STORE.create_task(task, str(staged_path))
     threading.Thread(target=run_upload_task, args=(task_id, staged_path), daemon=True).start()
     return snapshot_task(task_id) or task
+
+
+def retry_upload_task(task_id: str) -> dict[str, object]:
+    source_path = STORE.get_task_source_path(task_id)
+    if not source_path:
+        raise FileNotFoundError("原始上传文件不存在，请重新上传 PDF")
+    staged_path = Path(source_path)
+    if not staged_path.exists():
+        raise FileNotFoundError("原始上传文件已被移除，请重新上传 PDF")
+    STORE.reset_task_for_retry(task_id, current_timestamp_iso())
+    threading.Thread(target=run_upload_task, args=(task_id, staged_path), daemon=True).start()
+    task = snapshot_task(task_id)
+    if not task:
+        raise FileNotFoundError("未找到指定任务")
+    return task
 
 
 def strip_known_suffix(name: str) -> str:
@@ -761,8 +821,71 @@ def discover_records() -> dict[str, PaperRecord]:
     return records
 
 
+def serialize_paper_record(record: PaperRecord) -> dict[str, object]:
+    return {
+        "id": record.paper_id,
+        "title": record.title,
+        "taskId": record.task_id,
+        "rootDir": str(record.root_dir),
+        "autoDir": str(record.auto_dir),
+        "updatedAt": record.updated_at,
+        "availableViews": record.available_views,
+        "sourcePdf": record.source_pdf,
+        "files": {
+            key: str(value) if value else None
+            for key, value in record.files.items()
+        },
+    }
+
+
+def deserialize_paper_record(payload: dict[str, object]) -> Optional[PaperRecord]:
+    files_payload = payload.get("files")
+    if not isinstance(files_payload, dict):
+        return None
+    linearized_value = files_payload.get("linearized")
+    if not isinstance(linearized_value, str) or not Path(linearized_value).exists():
+        return None
+    available_views = payload.get("availableViews")
+    if not isinstance(available_views, list):
+        available_views = ["linearized"]
+    return PaperRecord(
+        paper_id=str(payload["id"]),
+        title=str(payload["title"]),
+        task_id=str(payload["taskId"]) if payload.get("taskId") else None,
+        root_dir=Path(str(payload["rootDir"])),
+        auto_dir=Path(str(payload["autoDir"])),
+        updated_at=float(payload["updatedAt"]),
+        available_views=[str(item) for item in available_views],
+        source_pdf=str(payload["sourcePdf"]) if payload.get("sourcePdf") else None,
+        files={
+            key: Path(str(value)) if value else None
+            for key, value in files_payload.items()
+        },
+    )
+
+
+def sync_paper_index():
+    discovered = discover_records()
+    if discovered:
+        STORE.upsert_papers(
+            [serialize_paper_record(record) for record in discovered.values()],
+            current_timestamp_iso(),
+        )
+
+
+def indexed_records(*, refresh: bool = False) -> dict[str, PaperRecord]:
+    if refresh:
+        sync_paper_index()
+    records: dict[str, PaperRecord] = {}
+    for payload in STORE.list_papers():
+        record = deserialize_paper_record(payload)
+        if record:
+            records[record.paper_id] = record
+    return records
+
+
 def get_record(paper_id: str) -> PaperRecord:
-    records = discover_records()
+    records = indexed_records()
     normalized = unquote(paper_id).strip().rstrip("/")
     direct = records.get(normalized)
     if direct:
@@ -778,12 +901,24 @@ def get_record(paper_id: str) -> PaperRecord:
             if record.task_id is None and task_part == title_part:
                 return record
 
+    records = indexed_records(refresh=True)
+    direct = records.get(normalized)
+    if direct:
+        return direct
+    if title_part:
+        for record in records.values():
+            if record.title == title_part and (
+                record.task_id == task_part
+                or (record.task_id is None and task_part == title_part)
+            ):
+                return record
+
     raise FileNotFoundError("未找到指定论文")
 
 
 def list_papers() -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
-    for record in sorted(discover_records().values(), key=lambda item: item.updated_at, reverse=True):
+    for record in sorted(indexed_records(refresh=True).values(), key=lambda item: item.updated_at, reverse=True):
         has_images = (record.auto_dir / "images").exists()
         items.append(
             {
@@ -1284,6 +1419,9 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/settings":
             return self.write_json(load_gui_settings())
 
+        if parsed.path == "/api/capabilities":
+            return self.write_json(detect_capabilities())
+
         if parsed.path == "/api/tasks":
             return self.write_json(list_tasks_payload())
 
@@ -1302,6 +1440,19 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 return self.write_json(build_detail(record))
             if remainder == "/annotations":
                 return self.write_json(load_paper_annotations(record))
+            if remainder == "/reading-state":
+                state = STORE.get_reading_state(record.paper_id)
+                if state is None:
+                    preferred_view = "bilingual" if "bilingual" in record.available_views else "linearized"
+                    state = {
+                        "paperId": record.paper_id,
+                        "view": preferred_view,
+                        "scrollY": 0,
+                        "activeSectionId": None,
+                        "draft": None,
+                        "updatedAt": None,
+                    }
+                return self.write_json(state)
             if remainder == "/memory":
                 return self.write_json(build_memory_payload(record))
 
@@ -1352,6 +1503,15 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
             return self.write_json(task, status=HTTPStatus.CREATED)
 
+        if parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/retry"):
+            task_id = unquote(parsed.path.removeprefix("/api/tasks/").removesuffix("/retry").strip("/"))
+            try:
+                return self.write_json(retry_upload_task(task_id))
+            except ValueError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            except FileNotFoundError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
+
         paper_route = parse_paper_api_path(parsed.path)
         if paper_route:
             paper_id, remainder = paper_route
@@ -1393,6 +1553,26 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
             RUNTIME_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             open_in_explorer(RUNTIME_OUTPUT_DIR)
             return self.write_json({"ok": True})
+
+        return self.write_json({"error": "未知接口"}, status=HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        paper_route = parse_paper_api_path(parsed.path)
+        if not paper_route:
+            return self.write_json({"error": "未知接口"}, status=HTTPStatus.NOT_FOUND)
+
+        paper_id, remainder = paper_route
+        payload = self.read_json_body()
+        try:
+            record = get_record(paper_id)
+            if remainder == "/reading-state":
+                state = STORE.save_reading_state(record.paper_id, payload, current_timestamp_iso())
+                return self.write_json(state)
+        except ValueError as error:
+            return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+        except FileNotFoundError as error:
+            return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
 
         return self.write_json({"error": "未知接口"}, status=HTTPStatus.NOT_FOUND)
 
@@ -1450,8 +1630,12 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    interrupted_count = STORE.mark_active_tasks_interrupted(current_timestamp_iso())
+    sync_paper_index()
     server = ThreadingHTTPServer((args.host, args.port), GuiRequestHandler)
     print(f"cark GUI listening on http://{args.host}:{args.port}/")
+    if interrupted_count:
+        print(f"[cark-gui] 已将 {interrupted_count} 个未完成任务标记为已中断。")
     if not args.no_browser:
         webbrowser.open(f"http://{args.host}:{args.port}/")
     try:

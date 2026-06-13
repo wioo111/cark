@@ -187,7 +187,45 @@ export interface ConnectionTestResult {
   detail?: string | null
 }
 
-export type ProcessingTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export interface AppCapabilities {
+  ready: boolean
+  issues: Array<{
+    code: string
+    message: string
+    action: string
+  }>
+  localParser: {
+    available: boolean
+    message: string
+  }
+  cloudParser: {
+    configured: boolean
+    message: string
+  }
+  translation: {
+    configured: boolean
+    message: string
+  }
+}
+
+export interface ReadingState {
+  paperId: string
+  view: PaperView
+  scrollY: number
+  activeSectionId?: string | null
+  draft?: {
+    view: PaperView
+    quote: string
+    contextBefore?: string | null
+    contextAfter?: string | null
+    anchorTop: number
+    anchorHeight: number
+    content: string
+  } | null
+  updatedAt?: string | null
+}
+
+export type ProcessingTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted'
 
 export interface ProcessingTask {
   id: string

@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  AppCapabilities,
   ConnectionTestResult,
   CreateAnnotationCommentInput,
   CreatePaperAnnotationInput,
@@ -9,6 +10,7 @@ import type {
   PaperMemory,
   PaperSummary,
   ProcessingTask,
+  ReadingState,
   UpdateAnnotationCommentInput,
   UpdatePaperAnnotationInput,
 } from '@/types'
@@ -35,6 +37,23 @@ export function fetchPapers() {
 
 export function fetchPaperDetail(id: string) {
   return requestJson<PaperDetail>(`/api/papers/${encodeURIComponent(id)}`)
+}
+
+export function fetchReadingState(id: string) {
+  return requestJson<ReadingState>(`/api/papers/${encodeURIComponent(id)}/reading-state`)
+}
+
+export function saveReadingState(id: string, payload: Omit<ReadingState, 'paperId' | 'updatedAt'>) {
+  return requestJson<ReadingState>(
+    `/api/papers/${encodeURIComponent(id)}/reading-state`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
 }
 
 export function fetchPaperMemory(id: string) {
@@ -153,6 +172,10 @@ export function fetchSettings() {
   return requestJson<AppSettings>('/api/settings')
 }
 
+export function fetchCapabilities() {
+  return requestJson<AppCapabilities>('/api/capabilities')
+}
+
 export function saveSettings(payload: AppSettings) {
   return requestJson<AppSettings>(
     '/api/settings',
@@ -181,6 +204,15 @@ export function postSettingsConnectionTest(target: 'mineru' | 'translation', set
 
 export function fetchTasks() {
   return requestJson<ProcessingTask[]>('/api/tasks')
+}
+
+export function postRetryTask(taskId: string) {
+  return requestJson<ProcessingTask>(
+    `/api/tasks/${encodeURIComponent(taskId)}/retry`,
+    {
+      method: 'POST',
+    },
+  )
 }
 
 export async function postUploadPdf(file: File) {

@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc -b --noEmit",
-    "test": "vitest run"
+    "test": "vitest run && python ../scripts/test_gui_storage.py"
   },
   "dependencies": {
     "clsx": "^2.1.1",
