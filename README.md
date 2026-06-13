@@ -62,7 +62,7 @@
 ### 方式一：直接启动 GUI
 
 ```powershell
-git clone https://github.com/wioo111/Paper2Lark.git cark
+git clone https://github.com/wioo111/cark.git cark
 cd cark
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 cark gui
