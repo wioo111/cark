@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { PaperSummary } from '@/types'
-import { extractOutline, getPreferredView, matchesQuery } from '@/utils/paper'
+import { extractOutline, getPreferredView, matchesQuery, resolvePaperView } from '@/utils/paper'
 
 describe('paper utils', () => {
   it('extracts heading outline from markdown', () => {
@@ -16,6 +16,13 @@ describe('paper utils', () => {
   it('returns preferred view in priority order', () => {
     expect(getPreferredView(['linearized', 'bilingual'])).toBe('bilingual')
     expect(getPreferredView(['linearized'])).toBe('linearized')
+  })
+
+  it('resolves requested view before restored and default views', () => {
+    const views = ['linearized', 'bilingual'] as const
+    expect(resolvePaperView([...views], 'linearized', 'bilingual')).toBe('linearized')
+    expect(resolvePaperView([...views], null, 'linearized')).toBe('linearized')
+    expect(resolvePaperView(['linearized'], 'bilingual', 'bilingual')).toBe('linearized')
   })
 
   it('matches title and source pdf keywords', () => {

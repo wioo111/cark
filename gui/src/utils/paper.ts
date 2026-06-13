@@ -19,6 +19,20 @@ export function getPreferredView(views: PaperView[]): PaperView {
   return 'linearized'
 }
 
+export function resolvePaperView(
+  views: PaperView[],
+  requestedView: PaperView | null,
+  restoredView: PaperView | null,
+): PaperView {
+  if (requestedView && views.includes(requestedView)) {
+    return requestedView
+  }
+  if (restoredView && views.includes(restoredView)) {
+    return restoredView
+  }
+  return getPreferredView(views)
+}
+
 export function formatUpdatedAt(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {

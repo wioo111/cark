@@ -1,4 +1,4 @@
-import { Bot, Copy, MessageSquarePlus, Search } from 'lucide-react'
+import { Copy, MessageSquarePlus, Search } from 'lucide-react'
 
 interface SelectionToolbarProps {
   x: number
@@ -6,10 +6,9 @@ interface SelectionToolbarProps {
   onCopy: () => void
   onSearch: () => void
   onComment: () => void
-  onAgent: () => void
 }
 
-export function SelectionToolbar({ x, y, onCopy, onSearch, onComment, onAgent }: SelectionToolbarProps) {
+export function SelectionToolbar({ x, y, onCopy, onSearch, onComment }: SelectionToolbarProps) {
   const actionClassName =
     'inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-200 transition hover:border-white/25 hover:text-zinc-50'
 
@@ -26,10 +25,6 @@ export function SelectionToolbar({ x, y, onCopy, onSearch, onComment, onAgent }:
       <button type="button" onClick={onSearch} className={actionClassName}>
         <Search className="h-3.5 w-3.5" />
         搜索
-      </button>
-      <button type="button" onClick={onAgent} className={actionClassName}>
-        <Bot className="h-3.5 w-3.5" />
-        召唤智能体
       </button>
       <button type="button" onClick={onComment} className={actionClassName}>
         <MessageSquarePlus className="h-3.5 w-3.5" />

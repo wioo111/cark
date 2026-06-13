@@ -1,8 +1,8 @@
-import { ArrowRight, Files, Image as ImageIcon, Languages } from 'lucide-react'
+import { ArrowRight, Image as ImageIcon, Languages } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import type { PaperSummary } from '@/types'
-import { formatUpdatedAt, getPreferredView } from '@/utils/paper'
+import { formatUpdatedAt } from '@/utils/paper'
 
 interface PaperListItemProps {
   paper: PaperSummary
@@ -12,15 +12,12 @@ interface PaperListItemProps {
 const viewLabelMap = {
   linearized: '结构化原文',
   bilingual: '中英双语',
-  'feishu-ready': '飞书专用格式',
 }
 
 export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
-  const preferredView = getPreferredView(paper.availableViews)
-
   return (
     <Link
-      to={`/reader/${encodeURIComponent(paper.id)}?view=${preferredView}`}
+      to={`/reader/${encodeURIComponent(paper.id)}`}
       className="group flex flex-col gap-4 rounded-[28px] border border-white/10 bg-white/[0.03] px-5 py-5 transition duration-200 hover:border-amber-300/40 hover:bg-white/[0.05]"
     >
       <div className="flex items-start justify-between gap-4">
@@ -28,12 +25,7 @@ export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
           <div className="flex flex-wrap items-center gap-2">
             {recent ? (
               <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[11px] uppercase tracking-[0.2em] text-amber-200">
-                Recent
-              </span>
-            ) : null}
-            {paper.taskId ? (
-              <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                {paper.taskId}
+                最近阅读
               </span>
             ) : null}
           </div>
@@ -42,7 +34,7 @@ export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
         </div>
 
         <div className="flex items-center gap-2 text-zinc-500 transition group-hover:text-amber-200">
-          <span className="text-xs uppercase tracking-[0.24em]">Open</span>
+          <span className="text-xs">阅读</span>
           <ArrowRight className="h-4 w-4" />
         </div>
       </div>
@@ -65,10 +57,6 @@ export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
             可验双语
           </span>
         ) : null}
-        <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-zinc-300">
-          <Files className="h-3.5 w-3.5" />
-          {paper.sourcePdf || '本地产物'}
-        </span>
       </div>
     </Link>
   )

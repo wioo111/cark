@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Archive, Bot, ChevronDown, ChevronUp, MessageSquarePlus, Pencil, Send, Sparkles, Trash2, X } from 'lucide-react'
+import { Archive, Bot, ChevronDown, ChevronUp, MessageSquarePlus, Pencil, Send, Trash2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type { AnnotationComment, PaperAnnotation, PaperView } from '@/types'
@@ -40,7 +40,6 @@ interface CommentLaneProps {
   onDraftSubmit: () => void
   onSelectAnnotation: (annotationId: string) => void
   onReplyStart: (annotationId: string) => void
-  onReplyAgent: (annotationId: string) => void
   onReplyChange: (value: string) => void
   onReplyCancel: () => void
   onReplySubmit: () => void
@@ -67,7 +66,6 @@ export function CommentLane({
   onDraftSubmit,
   onSelectAnnotation,
   onReplyStart,
-  onReplyAgent,
   onReplyChange,
   onReplyCancel,
   onReplySubmit,
@@ -253,17 +251,6 @@ export function CommentLane({
                   >
                     <MessageSquarePlus className="h-3.5 w-3.5" />
                     继续评论
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onReplyAgent(annotation.id)
-                    }}
-                    className="inline-flex items-center gap-2 rounded-full border border-sky-300/20 px-3 py-1.5 text-xs text-sky-100 transition hover:border-sky-300/40 hover:bg-sky-300/10"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    继续召唤智能体
                   </button>
                 </div>
 

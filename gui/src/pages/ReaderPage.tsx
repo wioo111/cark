@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, FolderOpen, PanelLeft, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, FolderOpen, PanelLeft, RefreshCw, X } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import {
   deletePaperAnnotation,
   fetchPaperAnnotations,
   fetchPaperDetail,
+  fetchReadingState,
   patchAnnotationComment,
   patchPaperAnnotation,
   postAnnotationComment,
   postOpenAction,
   postPaperAnnotation,
+  saveReadingState,
 } from '@/api'
 import { type AnnotationComposerDraft, type AnnotationEditDraft, type AnnotationReplyDraft, CommentLane } from '@/components/CommentLane'
 import { MarkdownArticle } from '@/components/MarkdownArticle'
@@ -19,7 +21,7 @@ import { SelectionToolbar } from '@/components/SelectionToolbar'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type { CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { findBestAnnotationMatch, normalizeAnnotationText, resolveAnnotationAnchor } from '@/utils/annotationLocator'
-import { extractOutline, formatUpdatedAt, getPreferredView } from '@/utils/paper'
+import { extractOutline, formatUpdatedAt, resolvePaperView } from '@/utils/paper'
 
 const viewOptions: Array<{ key: PaperView; label: string }> = [
   { key: 'linearized', label: '结构化原文' },
@@ -34,6 +36,10 @@ export default function ReaderPage() {
   const [annotations, setAnnotations] = useState<PaperAnnotation[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [annotationError, setAnnotationError] = useState<string | null>(null)
+  const [readingStateError, setReadingStateError] = useState<string | null>(null)
+  const [restoredView, setRestoredView] = useState<PaperView | null>(null)
+  const [readingStateLoaded, setReadingStateLoaded] = useState(false)
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [laneHeight, setLaneHeight] = useState(0)
@@ -48,6 +54,18 @@ export default function ReaderPage() {
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
   const articleShellRef = useRef<HTMLDivElement | null>(null)
   const articleRef = useRef<HTMLDivElement | null>(null)
+  const restoredScrollRef = useRef(0)
+  const restoreCompleteRef = useRef(false)
+  const scrollSaveTimerRef = useRef<number | null>(null)
+  const latestReadingStateRef = useRef<{
+    view: PaperView
+    activeSectionId: string | null
+    draft: AnnotationComposerDraft | null
+  }>({
+    view: 'linearized',
+    activeSectionId: null,
+    draft: null,
+  })
 
   useEffect(() => {
     rememberPaper(paperId)
@@ -57,6 +75,11 @@ export default function ReaderPage() {
     let cancelled = false
     setLoading(true)
     setError(null)
+    setAnnotationError(null)
+    setReadingStateError(null)
+    setReadingStateLoaded(false)
+    restoreCompleteRef.current = false
+    restoredScrollRef.current = 0
 
     fetchPaperDetail(paperId)
       .then(async (detailPayload) => {
@@ -66,20 +89,43 @@ export default function ReaderPage() {
 
         setDetail(detailPayload)
 
-        try {
-          const annotationPayload = await fetchPaperAnnotations(paperId)
-          if (!cancelled) {
-            setAnnotations(annotationPayload)
-          }
-        } catch {
-          if (!cancelled) {
-            setAnnotations([])
-          }
-        } finally {
-          if (!cancelled) {
-            setLoading(false)
-          }
+        const [annotationResult, readingStateResult] = await Promise.allSettled([
+          fetchPaperAnnotations(paperId),
+          fetchReadingState(paperId),
+        ])
+        if (cancelled) {
+          return
         }
+
+        if (annotationResult.status === 'fulfilled') {
+          setAnnotations(annotationResult.value)
+        } else {
+          setAnnotations([])
+          setAnnotationError(
+            annotationResult.reason instanceof Error
+              ? `批注加载失败：${annotationResult.reason.message}`
+              : '批注加载失败',
+          )
+        }
+
+        if (readingStateResult.status === 'fulfilled') {
+          const readingState = readingStateResult.value
+          setRestoredView(
+            detailPayload.availableViews.includes(readingState.view)
+              ? readingState.view
+              : null,
+          )
+          restoredScrollRef.current = readingState.scrollY
+          setDraft(readingState.draft ?? null)
+        } else {
+          setReadingStateError(
+            readingStateResult.reason instanceof Error
+              ? `阅读进度加载失败：${readingStateResult.reason.message}`
+              : '阅读进度加载失败',
+          )
+        }
+        setReadingStateLoaded(true)
+        setLoading(false)
       })
       .catch((fetchError) => {
         if (!cancelled) {
@@ -97,18 +143,100 @@ export default function ReaderPage() {
     document.title = detail ? `${detail.title} | cark` : 'cark'
   }, [detail])
 
-  const activeView = useMemo<PaperView>(() => {
-    if (!detail) {
-      return 'linearized'
-    }
-    const requested = searchParams.get('view') as PaperView | null
-    return requested && detail.availableViews.includes(requested)
-      ? requested
-      : getPreferredView(detail.availableViews)
-  }, [detail, searchParams])
+  const requestedView = searchParams.get('view') as PaperView | null
+  const activeView = useMemo(
+    () => resolvePaperView(detail?.availableViews ?? ['linearized'], requestedView, restoredView),
+    [detail?.availableViews, requestedView, restoredView],
+  )
 
   const markdown = detail?.markdown[activeView] ?? ''
   const outline = useMemo(() => extractOutline(markdown), [markdown])
+
+  useEffect(() => {
+    latestReadingStateRef.current = {
+      view: activeView,
+      activeSectionId,
+      draft,
+    }
+  }, [activeSectionId, activeView, draft])
+
+  useEffect(() => {
+    if (!detail || loading || !readingStateLoaded || restoreCompleteRef.current) {
+      return
+    }
+
+    let innerFrame = 0
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        window.scrollTo({ top: restoredScrollRef.current, behavior: 'auto' })
+        restoreCompleteRef.current = true
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(outerFrame)
+      window.cancelAnimationFrame(innerFrame)
+    }
+  }, [activeView, detail, loading, markdown, readingStateLoaded])
+
+  useEffect(() => {
+    if (!detail || !readingStateLoaded || !restoreCompleteRef.current) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void saveReadingState(detail.id, {
+        view: activeView,
+        scrollY: window.scrollY,
+        activeSectionId,
+        draft,
+      }).catch((saveError) => {
+        setReadingStateError(
+          saveError instanceof Error
+            ? `阅读进度保存失败：${saveError.message}`
+            : '阅读进度保存失败',
+        )
+      })
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [activeSectionId, activeView, detail, draft, readingStateLoaded])
+
+  useEffect(() => {
+    if (!detail || !readingStateLoaded) {
+      return
+    }
+    const handleScroll = () => {
+      if (!restoreCompleteRef.current) {
+        return
+      }
+      if (scrollSaveTimerRef.current !== null) {
+        window.clearTimeout(scrollSaveTimerRef.current)
+      }
+      scrollSaveTimerRef.current = window.setTimeout(() => {
+        const snapshot = latestReadingStateRef.current
+        void saveReadingState(detail.id, {
+          view: snapshot.view,
+          scrollY: window.scrollY,
+          activeSectionId: snapshot.activeSectionId,
+          draft: snapshot.draft,
+        }).catch((saveError) => {
+          setReadingStateError(
+            saveError instanceof Error
+              ? `阅读进度保存失败：${saveError.message}`
+              : '阅读进度保存失败',
+          )
+        })
+      }, 300)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollSaveTimerRef.current !== null) {
+        window.clearTimeout(scrollSaveTimerRef.current)
+        scrollSaveTimerRef.current = null
+      }
+    }
+  }, [detail, readingStateLoaded])
 
   useEffect(() => {
     const container = articleRef.current
@@ -328,6 +456,7 @@ export default function ReaderPage() {
     if (!toolbarSelection) {
       return
     }
+    setAnnotationError(null)
     setDraft({
       view: toolbarSelection.view,
       quote: toolbarSelection.quote,
@@ -341,28 +470,13 @@ export default function ReaderPage() {
     setToolbarSelection(null)
   }
 
-  async function handleAgentSummon() {
-    if (!detail || !toolbarSelection) {
-      return
-    }
-    const nextAnnotations = await upsertAnnotationComment(detail.id, annotations, toolbarSelection, {
-        authorType: 'agent',
-        authorLabel: '智能体评论',
-        content: '已记录这条句子的评论请求。等待后续接入智能体编排后生成正式评价。',
-        status: 'pending',
-      })
-    setAnnotations(nextAnnotations)
-    setFocusedAnnotationId(findExistingAnnotationId(nextAnnotations, toolbarSelection))
-    clearBrowserSelection()
-    setToolbarSelection(null)
-  }
-
   async function handleDraftSubmit() {
     if (!detail || !draft || !draft.content.trim()) {
       return
     }
 
     setSavingDraft(true)
+    setAnnotationError(null)
     try {
       const nextAnnotations = await upsertAnnotationComment(detail.id, annotations, draft, {
           authorType: 'user',
@@ -374,28 +488,17 @@ export default function ReaderPage() {
       setFocusedAnnotationId(findExistingAnnotationId(nextAnnotations, draft))
       setDraft(null)
       clearBrowserSelection()
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError('保存批注失败', saveError))
     } finally {
       setSavingDraft(false)
     }
   }
 
   function handleReplyStart(annotationId: string) {
+    setAnnotationError(null)
     setEditDraft(null)
     setReplyDraft({ annotationId, content: '' })
-  }
-
-  async function handleReplyAgent(annotationId: string) {
-    if (!detail) {
-      return
-    }
-    setAnnotations(
-      await postAnnotationComment(detail.id, annotationId, {
-        authorType: 'agent',
-        authorLabel: '智能体评论',
-        content: '已记录追加评论请求。等待后续接入智能体编排后生成正式评价。',
-        status: 'pending',
-      }),
-    )
   }
 
   async function handleReplySubmit() {
@@ -404,6 +507,7 @@ export default function ReaderPage() {
     }
 
     setSavingReply(true)
+    setAnnotationError(null)
     try {
       const nextAnnotations = await postAnnotationComment(detail.id, replyDraft.annotationId, {
           authorType: 'user',
@@ -414,12 +518,15 @@ export default function ReaderPage() {
       setAnnotations(nextAnnotations)
       setFocusedAnnotationId(replyDraft.annotationId)
       setReplyDraft(null)
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError('追加评论失败', saveError))
     } finally {
       setSavingReply(false)
     }
   }
 
   function handleEditStart(annotationId: string, commentId: string, content: string) {
+    setAnnotationError(null)
     setReplyDraft(null)
     setEditDraft({ annotationId, commentId, content })
   }
@@ -430,6 +537,7 @@ export default function ReaderPage() {
     }
 
     setSavingEdit(true)
+    setAnnotationError(null)
     try {
       const nextAnnotations = await patchAnnotationComment(detail.id, editDraft.annotationId, editDraft.commentId, {
           content: editDraft.content.trim(),
@@ -437,6 +545,8 @@ export default function ReaderPage() {
       setAnnotations(nextAnnotations)
       setFocusedAnnotationId(editDraft.annotationId)
       setEditDraft(null)
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError('保存修改失败', saveError))
     } finally {
       setSavingEdit(false)
     }
@@ -446,9 +556,14 @@ export default function ReaderPage() {
     if (!detail) {
       return
     }
-    setAnnotations(await patchPaperAnnotation(detail.id, annotationId, { archived: nextArchived }))
-    if (nextArchived && focusedAnnotationId === annotationId) {
-      setFocusedAnnotationId(null)
+    setAnnotationError(null)
+    try {
+      setAnnotations(await patchPaperAnnotation(detail.id, annotationId, { archived: nextArchived }))
+      if (nextArchived && focusedAnnotationId === annotationId) {
+        setFocusedAnnotationId(null)
+      }
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError(nextArchived ? '归档批注失败' : '还原批注失败', saveError))
     }
   }
 
@@ -456,9 +571,17 @@ export default function ReaderPage() {
     if (!detail) {
       return
     }
-    setAnnotations(await deletePaperAnnotation(detail.id, annotationId))
-    if (focusedAnnotationId === annotationId) {
-      setFocusedAnnotationId(null)
+    if (!window.confirm('删除这条批注及其中的所有评论？此操作无法撤销。')) {
+      return
+    }
+    setAnnotationError(null)
+    try {
+      setAnnotations(await deletePaperAnnotation(detail.id, annotationId))
+      if (focusedAnnotationId === annotationId) {
+        setFocusedAnnotationId(null)
+      }
+    } catch (deleteError) {
+      setAnnotationError(formatAnnotationError('删除批注失败', deleteError))
     }
   }
 
@@ -498,6 +621,27 @@ export default function ReaderPage() {
         <PanelLeft className="h-4 w-4" />
         目录
       </button>
+
+      {annotationError || readingStateError ? (
+        <div className="fixed right-4 top-4 z-[70] flex max-w-[460px] items-start gap-3 rounded-[20px] border border-rose-400/25 bg-[#2a1115]/95 px-4 py-3 text-sm text-rose-100 shadow-[0_20px_70px_rgba(0,0,0,0.4)] backdrop-blur">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="space-y-1">
+            {annotationError ? <p>{annotationError}</p> : null}
+            {readingStateError ? <p>{readingStateError}</p> : null}
+          </div>
+          <button
+            type="button"
+            aria-label="关闭错误提示"
+            onClick={() => {
+              setAnnotationError(null)
+              setReadingStateError(null)
+            }}
+            className="ml-auto text-rose-200/70 transition hover:text-rose-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
 
       {outlineOpen ? (
         <>
@@ -613,7 +757,6 @@ export default function ReaderPage() {
             onDraftSubmit={() => void handleDraftSubmit()}
             onSelectAnnotation={(annotationId) => setFocusedAnnotationId(annotationId)}
             onReplyStart={handleReplyStart}
-            onReplyAgent={(annotationId) => void handleReplyAgent(annotationId)}
             onReplyChange={(value) => setReplyDraft((current) => (current ? { ...current, content: value } : current))}
             onReplyCancel={() => setReplyDraft(null)}
             onReplySubmit={() => void handleReplySubmit()}
@@ -634,7 +777,6 @@ export default function ReaderPage() {
           onCopy={() => void handleCopySelection()}
           onSearch={handleSearchSelection}
           onComment={handleDraftStart}
-          onAgent={() => void handleAgentSummon()}
         />
       ) : null}
     </main>
@@ -789,4 +931,8 @@ function findExistingAnnotationId(
   }
 
   return null
+}
+
+function formatAnnotationError(prefix: string, error: unknown) {
+  return error instanceof Error ? `${prefix}：${error.message}` : prefix
 }
