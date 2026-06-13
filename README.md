@@ -62,8 +62,8 @@
 ### 方式一：直接启动 GUI
 
 ```powershell
-git clone https://github.com/wioo111/Paper2Lark.git
-cd Paper2Lark
+git clone https://github.com/wioo111/Paper2Lark.git cark
+cd cark
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 cark gui
 ```
@@ -117,4 +117,3 @@ cark docx ".\runtime\output\<task-id>\<paper>\auto\<paper>_content_list.json"
 还会继续推进的方向：的连接测试
 
 - 更强的共读与沉淀能力
-

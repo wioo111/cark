@@ -38,7 +38,7 @@ ORIGINAL = """    try:
         )"""
 
 PATCHED = """    try:
-        # [paper2lark patch] Windows 上 spawn 子进程池收尾 shutdown(wait=True) 可能永久阻塞，
+        # [cark patch] Windows 上 spawn 子进程池收尾 shutdown(wait=True) 可能永久阻塞，
         # 拖死整个 CLI。可视化只是预览 PDF，非核心产物，win32 下改用线程池更稳。
         if sys.platform == "win32":
             executor = ThreadPoolExecutor(
