@@ -25,6 +25,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from gui_storage import SingleInstanceLock, WorkbenchStore, format_task_command
 from process_utils import is_process_alive
+from zotero_client import (
+    ZoteroApiDisabledError,
+    ZoteroClient,
+    ZoteroUnavailableError,
+    normalize_item_key,
+)
 
 
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +56,7 @@ PROXY_ENV_KEYS = (
 )
 STORE = WorkbenchStore(DATABASE_PATH)
 SERVER_INSTANCE_ID = f"{os.getpid()}-{uuid.uuid4().hex}"
+ZOTERO_IMPORT_LOCK = threading.Lock()
 
 
 @dataclass
@@ -778,6 +785,90 @@ def create_upload_task(file_name: str, content: bytes) -> dict[str, object]:
     return snapshot_task(task_id) or task
 
 
+def create_upload_task_from_path(file_path: Path, file_name: str | None = None) -> dict[str, object]:
+    if not file_path.exists() or not file_path.is_file():
+        raise FileNotFoundError("待导入的 PDF 文件不存在")
+    if file_path.suffix.lower() != ".pdf":
+        raise ValueError("只能导入 PDF 文件")
+    safe_name = sanitize_filename(file_name or file_path.name)
+    if not safe_name.lower().endswith(".pdf"):
+        safe_name = f"{safe_name}.pdf"
+    task_id = f"task-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    staged_path = GUI_UPLOADS_DIR / f"{task_id}-{safe_name}"
+    staged_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(file_path, staged_path)
+    task = {
+        "id": task_id,
+        "fileName": safe_name,
+        "status": "queued",
+        "stage": "等待执行",
+        "progress": 0,
+        "createdAt": current_timestamp_iso(),
+        "updatedAt": current_timestamp_iso(),
+        "error": None,
+        "logs": [f"已从 Zotero 导入：{safe_name}"],
+        "result": None,
+    }
+    STORE.create_task(task, str(staged_path), SERVER_INSTANCE_ID)
+    threading.Thread(target=run_upload_task, args=(task_id, staged_path), daemon=True).start()
+    return snapshot_task(task_id) or task
+
+
+def zotero_status(client: ZoteroClient | None = None) -> dict[str, object]:
+    try:
+        return (client or ZoteroClient()).status()
+    except (ZoteroUnavailableError, ZoteroApiDisabledError, RuntimeError) as error:
+        return {
+            "available": False,
+            "version": None,
+            "message": str(error),
+        }
+
+
+def list_zotero_papers(
+    query: str = "",
+    *,
+    client: ZoteroClient | None = None,
+    store: WorkbenchStore = STORE,
+) -> list[dict[str, object]]:
+    papers = (client or ZoteroClient()).list_papers(query=query)
+    imports = {
+        str(item["attachmentKey"]): item
+        for item in store.list_zotero_imports()
+    }
+    for paper in papers:
+        imported = imports.get(str(paper["attachmentKey"]))
+        paper["imported"] = imported is not None
+        paper["taskId"] = imported.get("taskId") if imported else None
+    return papers
+
+
+def import_zotero_paper(
+    attachment_key: str,
+    *,
+    client: ZoteroClient | None = None,
+    store: WorkbenchStore = STORE,
+) -> dict[str, object]:
+    normalized_key = normalize_item_key(attachment_key)
+    with ZOTERO_IMPORT_LOCK:
+        existing = store.get_zotero_import(normalized_key)
+        if existing:
+            task = store.get_task(str(existing["taskId"]))
+            if task:
+                return task
+            raise ValueError("这篇 Zotero 论文已导入")
+
+        file_path, file_name, item_key = (client or ZoteroClient()).resolve_pdf(normalized_key)
+        task = create_upload_task_from_path(file_path, file_name)
+        store.record_zotero_import(
+            normalized_key,
+            item_key,
+            str(task["id"]),
+            current_timestamp_iso(),
+        )
+        return task
+
+
 def retry_upload_task(task_id: str) -> dict[str, object]:
     source_path = STORE.get_task_source_path(task_id)
     if not source_path:
@@ -1503,6 +1594,24 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/tasks":
             return self.write_json(list_tasks_payload())
 
+        if parsed.path == "/api/zotero/status":
+            return self.write_json(zotero_status())
+
+        if parsed.path == "/api/zotero/items":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            try:
+                return self.write_json(list_zotero_papers(query))
+            except (ZoteroUnavailableError, ZoteroApiDisabledError) as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+            except RuntimeError as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.BAD_GATEWAY,
+                )
+
         if parsed.path == "/api/papers":
             return self.write_json(list_papers())
 
@@ -1580,6 +1689,39 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 task = create_upload_task(file_name, self.read_binary_body())
             except ValueError as error:
                 return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            return self.write_json(task, status=HTTPStatus.CREATED)
+
+        if parsed.path == "/api/zotero/import":
+            payload = self.read_json_body()
+            attachment_key = payload.get("attachmentKey")
+            if not isinstance(attachment_key, str):
+                return self.write_json(
+                    {"error": "缺少 Zotero 附件标识"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            try:
+                ensure_upload_ready()
+                task = import_zotero_paper(attachment_key)
+            except (ValueError, ZoteroApiDisabledError) as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            except ZoteroUnavailableError as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+            except FileNotFoundError as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+            except RuntimeError as error:
+                return self.write_json(
+                    {"error": str(error)},
+                    status=HTTPStatus.BAD_GATEWAY,
+                )
             return self.write_json(task, status=HTTPStatus.CREATED)
 
         if parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/retry"):

@@ -148,6 +148,13 @@ class WorkbenchStore:
                     updated_at TEXT NOT NULL,
                     client_revision INTEGER NOT NULL DEFAULT 0
                 );
+
+                CREATE TABLE IF NOT EXISTS zotero_imports (
+                    attachment_key TEXT PRIMARY KEY,
+                    item_key TEXT,
+                    task_id TEXT NOT NULL,
+                    imported_at TEXT NOT NULL
+                );
                 """
             )
             task_columns = {
@@ -412,6 +419,57 @@ class WorkbenchStore:
         with self._lock, self._connection() as connection:
             rows = connection.execute("SELECT * FROM papers ORDER BY updated_at DESC").fetchall()
         return [_paper_from_row(row) for row in rows]
+
+    def record_zotero_import(
+        self,
+        attachment_key: str,
+        item_key: str | None,
+        task_id: str,
+        imported_at: str,
+    ):
+        with self._lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO zotero_imports (
+                    attachment_key, item_key, task_id, imported_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(attachment_key) DO UPDATE SET
+                    item_key = excluded.item_key,
+                    task_id = excluded.task_id,
+                    imported_at = excluded.imported_at
+                """,
+                (attachment_key, item_key, task_id, imported_at),
+            )
+
+    def get_zotero_import(self, attachment_key: str) -> dict[str, object] | None:
+        with self._lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM zotero_imports WHERE attachment_key = ?",
+                (attachment_key,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "attachmentKey": row["attachment_key"],
+            "itemKey": row["item_key"],
+            "taskId": row["task_id"],
+            "importedAt": row["imported_at"],
+        }
+
+    def list_zotero_imports(self) -> list[dict[str, object]]:
+        with self._lock, self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM zotero_imports ORDER BY imported_at DESC"
+            ).fetchall()
+        return [
+            {
+                "attachmentKey": row["attachment_key"],
+                "itemKey": row["item_key"],
+                "taskId": row["task_id"],
+                "importedAt": row["imported_at"],
+            }
+            for row in rows
+        ]
 
     def get_reading_state(self, paper_id: str) -> dict[str, object] | None:
         with self._lock, self._connection() as connection:

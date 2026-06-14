@@ -13,6 +13,8 @@ import type {
   ReadingState,
   UpdateAnnotationCommentInput,
   UpdatePaperAnnotationInput,
+  ZoteroPaper,
+  ZoteroStatus,
 } from '@/types'
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -243,4 +245,30 @@ export async function postUploadPdf(file: File) {
   }
 
   return response.json() as Promise<ProcessingTask>
+}
+
+export function fetchZoteroStatus() {
+  return requestJson<ZoteroStatus>('/api/zotero/status')
+}
+
+export function fetchZoteroPapers(query = '') {
+  const params = new URLSearchParams()
+  if (query.trim()) {
+    params.set('q', query.trim())
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return requestJson<ZoteroPaper[]>(`/api/zotero/items${suffix}`)
+}
+
+export function postImportZoteroPaper(attachmentKey: string) {
+  return requestJson<ProcessingTask>(
+    '/api/zotero/import',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ attachmentKey }),
+    },
+  )
 }

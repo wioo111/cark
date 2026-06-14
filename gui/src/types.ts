@@ -245,3 +245,20 @@ export interface ProcessingTask {
     output?: Record<string, unknown> | null
   } | null
 }
+
+export interface ZoteroStatus {
+  available: boolean
+  version?: string | null
+  message: string
+}
+
+export interface ZoteroPaper {
+  itemKey: string
+  attachmentKey: string
+  title: string
+  creators: string[]
+  year?: string | null
+  fileName: string
+  imported: boolean
+  taskId?: string | null
+}

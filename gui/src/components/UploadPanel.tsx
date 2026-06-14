@@ -1,4 +1,4 @@
-import { FileUp, LoaderCircle } from 'lucide-react'
+import { BookOpen, FileUp, LoaderCircle } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 interface UploadPanelProps {
@@ -7,6 +7,7 @@ interface UploadPanelProps {
   disabledReason?: string | null
   error: string | null
   onUpload: (file: File) => void
+  onOpenZotero: () => void
 }
 
 export function UploadPanel({
@@ -15,6 +16,7 @@ export function UploadPanel({
   disabledReason,
   error,
   onUpload,
+  onOpenZotero,
 }: UploadPanelProps) {
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -56,15 +58,28 @@ export function UploadPanel({
           <h2 className="mt-2 font-serif text-2xl text-zinc-50">上传一篇 PDF</h2>
           <p className="mt-2 text-sm leading-7 text-zinc-400">拖到这里，或选择文件。其余步骤自动完成。</p>
         </div>
-        <button
-          type="button"
-          disabled={uploading || disabled}
-          onClick={() => fileInputRef.current?.click()}
-          className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-300/15 px-5 py-3 text-sm font-medium text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {uploading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-          {uploading ? '正在上传' : disabled ? '暂不可上传' : '选择 PDF'}
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={uploading || disabled}
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-300/15 px-5 py-3 text-sm font-medium text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {uploading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+            {uploading ? '正在上传' : disabled ? '暂不可上传' : '选择 PDF'}
+          </button>
+          <button
+            type="button"
+            disabled={uploading || disabled}
+            onClick={onOpenZotero}
+            aria-haspopup="dialog"
+            aria-controls="zotero-import-dialog"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-3 text-sm text-zinc-300 transition hover:border-white/25 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <BookOpen className="h-4 w-4" />
+            从 Zotero 导入
+          </button>
+        </div>
       </div>
       <input
         ref={fileInputRef}

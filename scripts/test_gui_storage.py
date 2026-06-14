@@ -152,6 +152,20 @@ class WorkbenchStoreTests(unittest.TestCase):
             "keep this draft",
         )
 
+    def test_zotero_import_mapping_survives_reopen(self):
+        self.store.record_zotero_import(
+            "PDFD1234",
+            "ABCD1234",
+            "task-zotero",
+            "2026-06-14T16:30:00",
+        )
+
+        reopened = WorkbenchStore(self.store.database_path)
+        imported = reopened.get_zotero_import("PDFD1234")
+        self.assertEqual(imported["itemKey"], "ABCD1234")
+        self.assertEqual(imported["taskId"], "task-zotero")
+        self.assertEqual(reopened.list_zotero_imports(), [imported])
+
     def test_stale_reading_state_cannot_overwrite_newer_state(self):
         self.store.save_reading_state(
             "paper-1",

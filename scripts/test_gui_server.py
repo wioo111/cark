@@ -9,6 +9,8 @@ from gui_server import (
     annotation_file_path,
     build_task_command,
     ensure_upload_ready,
+    import_zotero_paper,
+    list_zotero_papers,
     normalize_annotation_comment,
     prepare_gui_server,
     sanitize_gui_settings,
@@ -217,6 +219,77 @@ class GuiServerStartupTests(unittest.TestCase):
         handler.write_json.assert_called_once_with(
             {"error": "当前环境还不能上传"},
             status=HTTPStatus.BAD_REQUEST,
+        )
+
+    def test_zotero_items_are_enriched_with_local_import_state(self):
+        client = Mock()
+        client.list_papers.return_value = [
+            {
+                "itemKey": "ABCD1234",
+                "attachmentKey": "PDFD1234",
+                "title": "Paper",
+                "creators": [],
+                "year": None,
+                "fileName": "paper.pdf",
+            }
+        ]
+        store = Mock()
+        store.list_zotero_imports.return_value = [
+            {
+                "attachmentKey": "PDFD1234",
+                "itemKey": "ABCD1234",
+                "taskId": "task-1",
+                "importedAt": "2026-06-14T16:30:00",
+            }
+        ]
+
+        papers = list_zotero_papers(client=client, store=store)
+
+        self.assertTrue(papers[0]["imported"])
+        self.assertEqual(papers[0]["taskId"], "task-1")
+
+    def test_duplicate_zotero_import_returns_existing_task(self):
+        store = Mock()
+        store.get_zotero_import.return_value = {
+            "attachmentKey": "PDFD1234",
+            "taskId": "task-existing",
+        }
+        store.get_task.return_value = {
+            "id": "task-existing",
+            "fileName": "paper.pdf",
+        }
+        client = Mock()
+
+        task = import_zotero_paper("PDFD1234", client=client, store=store)
+
+        self.assertEqual(task["id"], "task-existing")
+        client.resolve_pdf.assert_not_called()
+
+    def test_first_zotero_import_records_task_mapping(self):
+        client = Mock()
+        client.resolve_pdf.return_value = (
+            Path("D:/Zotero/storage/PDFD1234/paper.pdf"),
+            "paper.pdf",
+            "ABCD1234",
+        )
+        store = Mock()
+        store.get_zotero_import.return_value = None
+        created_task = {
+            "id": "task-new",
+            "fileName": "paper.pdf",
+        }
+
+        with patch(
+            "gui_server.create_upload_task_from_path",
+            return_value=created_task,
+        ):
+            task = import_zotero_paper("PDFD1234", client=client, store=store)
+
+        self.assertEqual(task, created_task)
+        store.record_zotero_import.assert_called_once()
+        self.assertEqual(
+            store.record_zotero_import.call_args.args[:3],
+            ("PDFD1234", "ABCD1234", "task-new"),
         )
 
 

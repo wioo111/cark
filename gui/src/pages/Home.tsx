@@ -12,6 +12,7 @@ import { PaperListItem } from '@/components/PaperListItem'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TaskCenter } from '@/components/TaskCenter'
 import { UploadPanel } from '@/components/UploadPanel'
+import { ZoteroImportDialog } from '@/components/ZoteroImportDialog'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type { AppCapabilities, AppSettings, ProcessingTask } from '@/types'
 import { matchesQuery } from '@/utils/paper'
@@ -54,6 +55,7 @@ export default function Home() {
   const [tasks, setTasks] = useState<ProcessingTask[]>([])
   const [tasksLoading, setTasksLoading] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [zoteroOpen, setZoteroOpen] = useState(false)
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -183,6 +185,10 @@ export default function Home() {
     }
   }
 
+  function handleZoteroImported(task: ProcessingTask) {
+    setTasks((current) => [task, ...current.filter((item) => item.id !== task.id)])
+  }
+
   function openPaper(task: ProcessingTask) {
     if (task.result?.paperId) {
       window.location.assign(`/reader/${encodeURIComponent(task.result.paperId)}`)
@@ -243,6 +249,7 @@ export default function Home() {
             disabledReason={uploadBlocked ? uploadBlockedReason : null}
             error={uploadError}
             onUpload={(file) => void handleUpload(file)}
+            onOpenZotero={() => setZoteroOpen(true)}
           />
         </div>
 
@@ -330,6 +337,11 @@ export default function Home() {
         capabilities={capabilities}
         onClose={() => setSettingsOpen(false)}
         onSaved={(nextSettings) => void handleSettingsSaved(nextSettings)}
+      />
+      <ZoteroImportDialog
+        open={zoteroOpen}
+        onClose={() => setZoteroOpen(false)}
+        onImported={handleZoteroImported}
       />
     </main>
   )
