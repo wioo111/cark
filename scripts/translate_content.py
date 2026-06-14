@@ -47,9 +47,8 @@ def translate_chunk(chunk, api_key, base_url, model, max_retries=3):
 Translate the following academic markdown text from English (or other source language) to Chinese.
 Output the translation in a bilingual format: first the original paragraph, then the translated paragraph.
 Preserve all Markdown formatting (headings, lists, bold, italics, math formulas, etc.) exactly as they are.
-If it is a heading, format it as:
-# Original Heading
-# Translated Heading
+If it is a heading, output the original heading followed by its Chinese translation, using the same Markdown heading level for both lines.
+Never output literal labels such as "Original Heading" or "Translated Heading".
 
 If it is a paragraph, format it as:
 Original paragraph

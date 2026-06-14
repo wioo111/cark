@@ -6,7 +6,12 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 
-import { rehypeSectionIds, resolveMediaUrl } from '@/utils/markdown'
+import {
+  isDecorativeExtractedImage,
+  rehypeDedupeImages,
+  rehypeSectionIds,
+  resolveMediaUrl,
+} from '@/utils/markdown'
 
 interface MarkdownArticleProps {
   markdown: string
@@ -32,6 +37,11 @@ interface ArticleImageProps {
 
 function ArticleImage({ paperId, src, alt }: ArticleImageProps) {
   const [failed, setFailed] = useState(false)
+  const [decorative, setDecorative] = useState(false)
+
+  if (decorative) {
+    return null
+  }
 
   if (failed) {
     return (
@@ -49,6 +59,12 @@ function ArticleImage({ paperId, src, alt }: ArticleImageProps) {
         loading="eager"
         decoding="async"
         className="cark-doc-image"
+        onLoad={(event) => {
+          const image = event.currentTarget
+          if (isDecorativeExtractedImage(image.naturalWidth, image.naturalHeight, alt)) {
+            setDecorative(true)
+          }
+        }}
         onError={() => setFailed(true)}
       />
       {alt ? <figcaption className="cark-doc-caption">{alt}</figcaption> : null}
@@ -98,6 +114,7 @@ export function MarkdownArticle({ markdown, paperId }: MarkdownArticleProps) {
         rehypePlugins={[
           rehypeRaw,
           [rehypeSanitize, sanitizeSchema],
+          rehypeDedupeImages,
           rehypeSectionIds,
           [rehypeKatex, { strict: 'ignore' }],
         ]}

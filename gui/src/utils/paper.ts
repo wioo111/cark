@@ -5,11 +5,70 @@ const outlinePattern = /^(#{1,6})\s+(.+)$/gm
 export function extractOutline(markdown: string): OutlineItem[] {
   const matches = markdown.matchAll(outlinePattern)
 
-  return Array.from(matches).map((match, index) => ({
-    id: `section-${index + 1}`,
+  return dedupeOutline(
+    Array.from(matches).map((match, index) => ({
+      id: `section-${index + 1}`,
+      level: match[1].length,
+      text: match[2].trim(),
+    })),
+  )
+}
+
+export function cleanBilingualMarkdown(markdown: string) {
+  return markdown
+    .replace(/^#{1,6}\s+(?:Original Heading|Translated Heading)\s*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
+export function extractBilingualOutline(
+  originalMarkdown: string,
+  bilingualMarkdown: string,
+): OutlineItem[] {
+  const originalHeadings = Array.from(originalMarkdown.matchAll(outlinePattern)).map((match) => ({
     level: match[1].length,
     text: match[2].trim(),
   }))
+  const bilingualHeadings = Array.from(bilingualMarkdown.matchAll(outlinePattern)).map((match, index) => ({
+    id: `section-${index + 1}`,
+    text: match[2].trim(),
+  }))
+  let cursor = 0
+  const outline: OutlineItem[] = []
+
+  for (const original of originalHeadings) {
+    const normalized = normalizeHeading(original.text)
+    const matchIndex = bilingualHeadings.findIndex(
+      (candidate, index) => index >= cursor && normalizeHeading(candidate.text) === normalized,
+    )
+    if (matchIndex < 0) {
+      continue
+    }
+    outline.push({
+      id: bilingualHeadings[matchIndex].id,
+      level: original.level,
+      text: original.text,
+    })
+    cursor = matchIndex + 1
+  }
+
+  return dedupeOutline(outline)
+}
+
+function normalizeHeading(value: string) {
+  return value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[.:：。]\s*$/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function dedupeOutline(outline: OutlineItem[]) {
+  return outline.filter((item, index) => {
+    if (index === 0) {
+      return true
+    }
+    return normalizeHeading(item.text) !== normalizeHeading(outline[index - 1].text)
+  })
 }
 
 export function getPreferredView(views: PaperView[]): PaperView {

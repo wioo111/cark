@@ -1,4 +1,4 @@
-import { ArrowRight, Image as ImageIcon, Languages } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import type { PaperSummary } from '@/types'
@@ -7,11 +7,6 @@ import { formatUpdatedAt } from '@/utils/paper'
 interface PaperListItemProps {
   paper: PaperSummary
   recent?: boolean
-}
-
-const viewLabelMap = {
-  linearized: '结构化原文',
-  bilingual: '中英双语',
 }
 
 export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
@@ -39,25 +34,6 @@ export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 text-xs text-zinc-300">
-        {paper.availableViews.map((view) => (
-          <span key={view} className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
-            {viewLabelMap[view]}
-          </span>
-        ))}
-        {paper.hasImages ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-teal-400/20 bg-teal-400/10 px-3 py-1.5 text-teal-100">
-            <ImageIcon className="h-3.5 w-3.5" />
-            图片
-          </span>
-        ) : null}
-        {paper.availableViews.includes('bilingual') ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/20 bg-sky-400/10 px-3 py-1.5 text-sky-100">
-            <Languages className="h-3.5 w-3.5" />
-            可验双语
-          </span>
-        ) : null}
-      </div>
     </Link>
   )
 }

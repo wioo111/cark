@@ -22,7 +22,13 @@ import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type { CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { findBestAnnotationMatch, normalizeAnnotationText, resolveAnnotationAnchor } from '@/utils/annotationLocator'
 import { scrollToArticleSection } from '@/utils/markdown'
-import { extractOutline, formatUpdatedAt, resolvePaperView } from '@/utils/paper'
+import {
+  cleanBilingualMarkdown,
+  extractBilingualOutline,
+  extractOutline,
+  formatUpdatedAt,
+  resolvePaperView,
+} from '@/utils/paper'
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
 
 const viewOptions: Array<{ key: PaperView; label: string }> = [
@@ -156,8 +162,16 @@ export default function ReaderPage() {
     [detail?.availableViews, requestedView, restoredView],
   )
 
-  const markdown = detail?.markdown[activeView] ?? ''
-  const outline = useMemo(() => extractOutline(markdown), [markdown])
+  const markdown = useMemo(() => {
+    const source = detail?.markdown[activeView] ?? ''
+    return activeView === 'bilingual' ? cleanBilingualMarkdown(source) : source
+  }, [activeView, detail?.markdown])
+  const outline = useMemo(() => {
+    if (activeView === 'bilingual') {
+      return extractBilingualOutline(detail?.markdown.linearized ?? '', markdown)
+    }
+    return extractOutline(markdown)
+  }, [activeView, detail?.markdown.linearized, markdown])
 
   useEffect(() => {
     latestReadingStateRef.current = {

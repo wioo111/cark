@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { MarkdownArticle } from '@/components/MarkdownArticle'
-import { resolveMediaUrl, scrollToArticleSection } from '@/utils/markdown'
+import {
+  isDecorativeExtractedImage,
+  resolveMediaUrl,
+  scrollToArticleSection,
+} from '@/utils/markdown'
 
 describe('MarkdownArticle', () => {
   it('renders stable section ids for outline navigation', () => {
@@ -32,6 +36,30 @@ describe('MarkdownArticle', () => {
       'src',
       '/api/media/paper%2F1?path=auto%2Fimages%2Ffigure.jpg',
     )
+  })
+
+  it('removes duplicate and decorative extracted images', () => {
+    const { container } = render(
+      <MarkdownArticle
+        paperId="paper-1"
+        markdown={'![](images/icon.jpg)\n\n![](images/icon.jpg)'}
+      />,
+    )
+    const image = container.querySelector('img')
+    expect(container.querySelectorAll('img')).toHaveLength(1)
+    expect(image).not.toBeNull()
+    Object.defineProperties(image as HTMLImageElement, {
+      naturalWidth: { configurable: true, value: 64 },
+      naturalHeight: { configurable: true, value: 64 },
+    })
+    fireEvent.load(image as HTMLImageElement)
+    expect(container.querySelectorAll('img')).toHaveLength(0)
+  })
+
+  it('keeps compact formula images while hiding square interface icons', () => {
+    expect(isDecorativeExtractedImage(60, 59, '')).toBe(true)
+    expect(isDecorativeExtractedImage(198, 51, '')).toBe(false)
+    expect(isDecorativeExtractedImage(60, 59, 'Figure 2')).toBe(false)
   })
 
   it('sanitizes unsafe raw HTML while preserving math rendering', () => {

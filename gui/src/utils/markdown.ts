@@ -37,6 +37,20 @@ export function resolveMediaUrl(paperId: string, source: string) {
   return `/api/media/${encodeURIComponent(paperId)}?path=${encodeURIComponent(relativePath)}`
 }
 
+export function isDecorativeExtractedImage(width: number, height: number, alt: string) {
+  if (alt.trim() || width <= 0 || height <= 0) {
+    return false
+  }
+  const aspectRatio = width / height
+  return (
+    width <= 120
+    && height >= 45
+    && height <= 120
+    && aspectRatio >= 0.65
+    && aspectRatio <= 1.5
+  )
+}
+
 export function rehypeSectionIds() {
   return (tree: MarkdownTreeNode) => {
     let sectionIndex = 0
@@ -54,6 +68,33 @@ export function rehypeSectionIds() {
         }
       }
       node.children?.forEach(visit)
+    }
+
+    visit(tree)
+  }
+}
+
+export function rehypeDedupeImages() {
+  return (tree: MarkdownTreeNode) => {
+    const seen = new Set<string>()
+
+    function visit(node: MarkdownTreeNode) {
+      if (!node.children) {
+        return
+      }
+      node.children = node.children.filter((child) => {
+        if (child.type === 'element' && child.tagName === 'img') {
+          const source = child.properties?.src
+          if (typeof source === 'string') {
+            if (seen.has(source)) {
+              return false
+            }
+            seen.add(source)
+          }
+        }
+        visit(child)
+        return true
+      })
     }
 
     visit(tree)

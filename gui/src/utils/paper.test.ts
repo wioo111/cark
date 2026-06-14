@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import type { PaperSummary } from '@/types'
-import { extractOutline, getPreferredView, matchesQuery, resolvePaperView } from '@/utils/paper'
+import {
+  cleanBilingualMarkdown,
+  extractBilingualOutline,
+  extractOutline,
+  getPreferredView,
+  matchesQuery,
+  resolvePaperView,
+} from '@/utils/paper'
 
 describe('paper utils', () => {
   it('extracts heading outline from markdown', () => {
@@ -11,6 +18,29 @@ describe('paper utils', () => {
       { id: 'section-2', level: 2, text: '第二节' },
       { id: 'section-3', level: 3, text: '细节' },
     ])
+  })
+
+  it('uses only original headings in bilingual navigation', () => {
+    const original = '## ABSTRACT\n\n## 1. INTRODUCTION\n\n## 1. INTRODUCTION\n\n## 1.1. Results'
+    const bilingual = [
+      '## ABSTRACT',
+      '## 摘要',
+      '## 1. INTRODUCTION',
+      '## 1. 引言',
+      '## 1. INTRODUCTION',
+      '## 1. 引言',
+      '# Original Heading',
+      '# Translated Heading',
+      '## 1.1. Results',
+      '## 1.1. 结果',
+    ].join('\n\n')
+
+    expect(extractBilingualOutline(original, cleanBilingualMarkdown(bilingual))).toEqual([
+      { id: 'section-1', level: 2, text: 'ABSTRACT' },
+      { id: 'section-3', level: 2, text: '1. INTRODUCTION' },
+      { id: 'section-7', level: 2, text: '1.1. Results' },
+    ])
+    expect(cleanBilingualMarkdown(bilingual)).not.toContain('Original Heading')
   })
 
   it('returns preferred view in priority order', () => {
