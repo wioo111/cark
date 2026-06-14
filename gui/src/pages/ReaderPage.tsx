@@ -21,6 +21,7 @@ import { SelectionToolbar } from '@/components/SelectionToolbar'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type { CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { findBestAnnotationMatch, normalizeAnnotationText, resolveAnnotationAnchor } from '@/utils/annotationLocator'
+import { scrollToArticleSection } from '@/utils/markdown'
 import { extractOutline, formatUpdatedAt, resolvePaperView } from '@/utils/paper'
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
 
@@ -272,8 +273,9 @@ export default function ReaderPage() {
 
     const headings = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6'))
     headings.forEach((element, index) => {
-      const id = outline[index]?.id ?? `section-${index + 1}`
-      element.setAttribute('id', id)
+      if (!element.id) {
+        element.setAttribute('id', outline[index]?.id ?? `section-${index + 1}`)
+      }
     })
 
     const observer = new IntersectionObserver(
@@ -451,8 +453,15 @@ export default function ReaderPage() {
   }
 
   function jumpToHeading(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     setOutlineOpen(false)
+    window.requestAnimationFrame(() => {
+      const container = articleRef.current
+      if (!container || !scrollToArticleSection(container, id)) {
+        setReadingStateError('目录定位失败，请刷新页面后重试')
+        return
+      }
+      setActiveSectionId(id)
+    })
   }
 
   function handleSelectionCapture() {

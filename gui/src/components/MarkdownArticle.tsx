@@ -1,22 +1,59 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+
+import { rehypeSectionIds, resolveMediaUrl } from '@/utils/markdown'
 
 interface MarkdownArticleProps {
   markdown: string
   paperId: string
 }
 
-function resolveMediaUrl(paperId: string, source: string) {
-  if (!source || source.startsWith('http://') || source.startsWith('https://') || source.startsWith('data:') || source.startsWith('#')) {
-    return source
+const sanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [
+      ...(defaultSchema.attributes?.code ?? []),
+      ['className', 'language-math', 'math-inline', 'math-display'],
+    ],
+  },
+}
+
+interface ArticleImageProps {
+  paperId: string
+  src: string
+  alt: string
+}
+
+function ArticleImage({ paperId, src, alt }: ArticleImageProps) {
+  const [failed, setFailed] = useState(false)
+
+  if (failed) {
+    return (
+      <div className="cark-doc-image-error" role="status">
+        图片加载失败{alt ? `：${alt}` : ''}
+      </div>
+    )
   }
 
-  const cleaned = source.replace(/^\.?\//, '')
-  const relativePath = cleaned.startsWith('images/') ? `auto/${cleaned}` : cleaned
-  return `/api/media/${encodeURIComponent(paperId)}?path=${encodeURIComponent(relativePath)}`
+  return (
+    <figure className="cark-doc-figure" data-locator-node="true">
+      <img
+        src={resolveMediaUrl(paperId, src)}
+        alt={alt}
+        loading="eager"
+        decoding="async"
+        className="cark-doc-image"
+        onError={() => setFailed(true)}
+      />
+      {alt ? <figcaption className="cark-doc-caption">{alt}</figcaption> : null}
+    </figure>
+  )
 }
 
 export function MarkdownArticle({ markdown, paperId }: MarkdownArticleProps) {
@@ -48,15 +85,7 @@ export function MarkdownArticle({ markdown, paperId }: MarkdownArticleProps) {
       td: ({ node: _node, ...props }) => <td data-locator-node="true" className="cark-doc-td" {...props} />,
       th: ({ node: _node, ...props }) => <th data-locator-node="true" className="cark-doc-th" {...props} />,
       img: ({ node: _node, src, alt }) => (
-        <figure className="cark-doc-figure" data-locator-node="true">
-          <img
-            src={resolveMediaUrl(paperId, src ?? '')}
-            alt={alt ?? ''}
-            loading="lazy"
-            className="cark-doc-image"
-          />
-          {alt ? <figcaption className="cark-doc-caption">{alt}</figcaption> : null}
-        </figure>
+        <ArticleImage paperId={paperId} src={src ?? ''} alt={alt ?? ''} />
       ),
     }),
     [paperId],
@@ -66,7 +95,12 @@ export function MarkdownArticle({ markdown, paperId }: MarkdownArticleProps) {
     <article className="cark-doc mx-auto max-w-[860px]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { strict: 'ignore' }]]}
+        rehypePlugins={[
+          rehypeRaw,
+          [rehypeSanitize, sanitizeSchema],
+          rehypeSectionIds,
+          [rehypeKatex, { strict: 'ignore' }],
+        ]}
         components={components}
       >
         {markdown}

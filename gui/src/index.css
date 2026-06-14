@@ -232,13 +232,26 @@ a {
 
 .cark-doc-image {
   display: block;
-  width: 100%;
+  width: auto;
+  height: auto;
+  max-width: 100%;
   max-height: 70vh;
+  margin: 0 auto;
   object-fit: contain;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.03);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+}
+
+.cark-doc-image-error {
+  margin: 1.8em 0;
+  padding: 1rem 1.25rem;
+  border: 1px dashed rgba(251, 113, 133, 0.35);
+  border-radius: 18px;
+  background: rgba(127, 29, 29, 0.14);
+  color: rgb(254 205 211);
+  font-size: 0.875rem;
 }
 
 .cark-doc-caption {
