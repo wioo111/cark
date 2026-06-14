@@ -152,6 +152,36 @@ class WorkbenchStoreTests(unittest.TestCase):
             "keep this draft",
         )
 
+    def test_stale_reading_state_cannot_overwrite_newer_state(self):
+        self.store.save_reading_state(
+            "paper-1",
+            {
+                "view": "bilingual",
+                "scrollY": 900,
+                "activeSectionId": "section-new",
+                "draft": {"content": "new draft"},
+                "clientRevision": 200,
+            },
+            "2026-06-13T10:02:00",
+        )
+        self.store.save_reading_state(
+            "paper-1",
+            {
+                "view": "linearized",
+                "scrollY": 100,
+                "activeSectionId": "section-old",
+                "draft": {"content": "old draft"},
+                "clientRevision": 100,
+            },
+            "2026-06-13T10:03:00",
+        )
+
+        state = self.store.get_reading_state("paper-1")
+        self.assertEqual(state["view"], "bilingual")
+        self.assertEqual(state["scrollY"], 900)
+        self.assertEqual(state["clientRevision"], 200)
+        self.assertEqual(state["draft"]["content"], "new draft")
+
     def test_task_command_masks_secrets(self):
         formatted = format_task_command(
             [

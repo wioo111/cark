@@ -323,7 +323,7 @@ def save_gui_settings(payload: dict[str, object]) -> dict[str, object]:
 
 
 def detect_capabilities(settings: Optional[dict[str, object]] = None) -> dict[str, object]:
-    current = settings or load_gui_settings()
+    current = settings if settings is not None else load_gui_settings()
     mineru = current.get("mineru") if isinstance(current.get("mineru"), dict) else {}
     translation = current.get("translation") if isinstance(current.get("translation"), dict) else {}
     publish = current.get("publish") if isinstance(current.get("publish"), dict) else {}
@@ -616,7 +616,10 @@ def build_task_command(file_path: Path, settings: dict[str, object]) -> tuple[li
     env["OPENAI_API_KEY"] = str(translation_settings.get("apiKey") or "")
     env["OPENAI_BASE_URL"] = str(translation_settings.get("baseUrl") or "https://api.deepseek.com/v1")
     env["OPENAI_MODEL"] = str(translation_settings.get("model") or "deepseek-chat")
-    env["TRANSLATE_FAIL_RATIO_LIMIT"] = str(translation_settings.get("failRatioLimit") or 0.2)
+    fail_ratio_limit = translation_settings.get("failRatioLimit")
+    env["TRANSLATE_FAIL_RATIO_LIMIT"] = str(
+        0.2 if fail_ratio_limit is None else fail_ratio_limit
+    )
 
     safe_stem = sanitize_ascii_stem(file_path.stem)
     mineru_log = WORKBENCH_ROOT / "runtime" / "logs" / f"mineru_{safe_stem}.log"
@@ -1276,15 +1279,16 @@ def annotation_preview(content: str, *, limit: int = 72) -> str:
 
 def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object]:
     author_type = payload.get("authorType")
-    if author_type not in {"user", "agent"}:
-        raise ValueError("评论作者类型非法")
+    if author_type != "user":
+        raise ValueError("当前阶段只允许保存用户评论")
     author_label = payload.get("authorLabel")
     if not isinstance(author_label, str) or not author_label.strip():
         raise ValueError("评论作者名称不能为空")
     content = payload.get("content")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("评论内容不能为空")
-    status = payload.get("status") if payload.get("status") in {"ready", "pending"} else "ready"
+    if payload.get("status", "ready") != "ready":
+        raise ValueError("当前阶段不允许保存占位评论")
     timestamp = current_timestamp_iso()
     return {
         "id": f"comment-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
@@ -1294,7 +1298,7 @@ def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object
         "preview": annotation_preview(content.strip()),
         "createdAt": timestamp,
         "updatedAt": timestamp,
-        "status": status,
+        "status": "ready",
     }
 
 
@@ -1313,6 +1317,8 @@ def load_paper_annotations(record: PaperRecord) -> list[dict[str, object]]:
 
 
 def annotation_file_path(record: PaperRecord, annotation_id: str) -> Path:
+    if re.fullmatch(r"annotation-[A-Za-z0-9_-]+", annotation_id) is None:
+        raise FileNotFoundError("批注线程标识非法")
     return paper_annotations_dir(record) / f"{annotation_id}.json"
 
 

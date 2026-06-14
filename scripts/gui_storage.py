@@ -145,7 +145,8 @@ class WorkbenchStore:
                     scroll_y REAL NOT NULL,
                     active_section_id TEXT,
                     draft_json TEXT,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    client_revision INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
@@ -157,6 +158,14 @@ class WorkbenchStore:
                 connection.execute("ALTER TABLE tasks ADD COLUMN owner_id TEXT")
             if "worker_pid" not in task_columns:
                 connection.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
+            reading_state_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(reading_states)").fetchall()
+            }
+            if "client_revision" not in reading_state_columns:
+                connection.execute(
+                    "ALTER TABLE reading_states ADD COLUMN client_revision INTEGER NOT NULL DEFAULT 0"
+                )
             rows = connection.execute("SELECT id, logs_json FROM tasks").fetchall()
             for row in rows:
                 logs = _load_json(row["logs_json"], [])
@@ -419,6 +428,7 @@ class WorkbenchStore:
             "activeSectionId": row["active_section_id"],
             "draft": _load_json(row["draft_json"], None),
             "updatedAt": row["updated_at"],
+            "clientRevision": int(row["client_revision"]),
         }
 
     def save_reading_state(self, paper_id: str, state: dict[str, object], updated_at: str) -> dict[str, object]:
@@ -435,19 +445,26 @@ class WorkbenchStore:
         draft = state.get("draft")
         if draft is not None and not isinstance(draft, dict):
             raise ValueError("批注草稿非法")
+        try:
+            client_revision = max(int(state.get("clientRevision") or 0), 0)
+        except (TypeError, ValueError) as error:
+            raise ValueError("阅读状态版本非法") from error
 
         with self._lock, self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO reading_states (
-                    paper_id, view, scroll_y, active_section_id, draft_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    paper_id, view, scroll_y, active_section_id, draft_json, updated_at,
+                    client_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(paper_id) DO UPDATE SET
                     view = excluded.view,
                     scroll_y = excluded.scroll_y,
                     active_section_id = excluded.active_section_id,
                     draft_json = excluded.draft_json,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    client_revision = excluded.client_revision
+                WHERE excluded.client_revision >= reading_states.client_revision
                 """,
                 (
                     paper_id,
@@ -456,6 +473,7 @@ class WorkbenchStore:
                     active_section_id,
                     _dump_json(draft) if draft is not None else None,
                     updated_at,
+                    client_revision,
                 ),
             )
         saved = self.get_reading_state(paper_id)

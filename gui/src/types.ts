@@ -213,6 +213,7 @@ export interface ReadingState {
   paperId: string
   view: PaperView
   scrollY: number
+  clientRevision?: number
   activeSectionId?: string | null
   draft?: {
     view: PaperView

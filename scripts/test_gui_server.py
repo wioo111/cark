@@ -1,10 +1,15 @@
 import unittest
 from http import HTTPStatus
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from gui_server import (
     GuiRequestHandler,
+    PaperRecord,
+    annotation_file_path,
+    build_task_command,
     ensure_upload_ready,
+    normalize_annotation_comment,
     prepare_gui_server,
     sanitize_gui_settings,
 )
@@ -145,6 +150,55 @@ class GuiServerStartupTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings["translation"]["model"], "custom-model")
+
+    def test_zero_translation_failure_limit_is_preserved(self):
+        settings = sanitize_gui_settings(
+            {
+                "translation": {
+                    "enabled": True,
+                    "apiKey": "key",
+                    "failRatioLimit": 0,
+                },
+                "publish": {"prepareOnly": True},
+            }
+        )
+        _, env, _ = build_task_command(Path("paper.pdf"), settings)
+        self.assertEqual(env["TRANSLATE_FAIL_RATIO_LIMIT"], "0.0")
+
+    def test_placeholder_agent_comments_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "只允许保存用户评论"):
+            normalize_annotation_comment(
+                {
+                    "authorType": "agent",
+                    "authorLabel": "Agent",
+                    "content": "placeholder",
+                    "status": "pending",
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "不允许保存占位评论"):
+            normalize_annotation_comment(
+                {
+                    "authorType": "user",
+                    "authorLabel": "我",
+                    "content": "placeholder",
+                    "status": "pending",
+                }
+            )
+
+    def test_annotation_id_cannot_escape_annotation_directory(self):
+        record = PaperRecord(
+            paper_id="paper-1",
+            title="Paper",
+            task_id=None,
+            root_dir=Path("paper"),
+            auto_dir=Path("paper/auto"),
+            updated_at=0,
+            available_views=["linearized"],
+            source_pdf=None,
+            files={},
+        )
+        with self.assertRaisesRegex(FileNotFoundError, "标识非法"):
+            annotation_file_path(record, "../../paper_profile")
 
     def test_upload_rejection_happens_before_reading_request_body(self):
         handler = object.__new__(GuiRequestHandler)

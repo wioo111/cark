@@ -58,6 +58,7 @@ export default function ReaderPage() {
   const restoredScrollRef = useRef(0)
   const restoreCompleteRef = useRef(false)
   const readingSaveSchedulerRef = useRef<SaveScheduler | null>(null)
+  const readingRevisionRef = useRef(Date.now() * 1000)
   const latestReadingStateRef = useRef<{
     view: PaperView
     activeSectionId: string | null
@@ -117,6 +118,10 @@ export default function ReaderPage() {
               : null,
           )
           restoredScrollRef.current = readingState.scrollY
+          readingRevisionRef.current = Math.max(
+            readingRevisionRef.current,
+            readingState.clientRevision ?? 0,
+          )
           setDraft(readingState.draft ?? null)
         } else {
           setReadingStateError(
@@ -167,12 +172,17 @@ export default function ReaderPage() {
     }
     const scheduler = createSaveScheduler(async (keepalive) => {
       const snapshot = latestReadingStateRef.current
+      readingRevisionRef.current = Math.max(
+        readingRevisionRef.current + 1,
+        Date.now() * 1000,
+      )
       try {
         await saveReadingState(
           detail.id,
           {
             view: snapshot.view,
             scrollY: window.scrollY,
+            clientRevision: readingRevisionRef.current,
             activeSectionId: snapshot.activeSectionId,
             draft: snapshot.draft,
           },
