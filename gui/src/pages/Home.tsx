@@ -29,6 +29,7 @@ function createFallbackSettings(): AppSettings {
       enabled: false,
       apiKey: '',
       baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
       failRatioLimit: 0.2,
     },
     publish: {
@@ -63,6 +64,10 @@ export default function Home() {
   const recentPaperIds = useWorkspaceStore((state) => state.recentPaperIds)
   const refreshPapers = useWorkspaceStore((state) => state.refreshPapers)
   const completedTaskIdsRef = useRef<Set<string>>(new Set())
+  const uploadBlocked = capabilities === null || !capabilities.ready
+  const uploadBlockedReason = capabilities === null
+    ? '正在检查这台电脑的可用能力。'
+    : capabilities.issues.map((issue) => issue.message).join(' ')
 
   useEffect(() => {
     document.title = 'cark'
@@ -143,6 +148,10 @@ export default function Home() {
   }, [papers, recentPaperIds])
 
   async function handleUpload(file: File) {
+    if (uploadBlocked) {
+      setUploadError(uploadBlockedReason || '当前环境还不能上传')
+      return
+    }
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       setUploadError('请选择 PDF 文件')
       return
@@ -207,12 +216,8 @@ export default function Home() {
           </button>
         </header>
 
-        <div className="mt-6">
-          <UploadPanel uploading={uploading} error={uploadError} onUpload={(file) => void handleUpload(file)} />
-        </div>
-
         {capabilities && !capabilities.ready ? (
-          <section className="mt-4 flex flex-col justify-between gap-3 rounded-[22px] border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 sm:flex-row sm:items-center">
+          <section className="mt-6 flex flex-col justify-between gap-3 rounded-[22px] border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 sm:flex-row sm:items-center">
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" />
               <div className="text-sm leading-6 text-amber-100">
@@ -230,6 +235,16 @@ export default function Home() {
             </button>
           </section>
         ) : null}
+
+        <div className={capabilities && !capabilities.ready ? 'mt-4' : 'mt-6'}>
+          <UploadPanel
+            uploading={uploading}
+            disabled={uploadBlocked}
+            disabledReason={uploadBlocked ? uploadBlockedReason : null}
+            error={uploadError}
+            onUpload={(file) => void handleUpload(file)}
+          />
+        </div>
 
         {bootstrapError ? (
           <div className="mt-4 rounded-[20px] border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">

@@ -43,7 +43,11 @@ export function fetchReadingState(id: string) {
   return requestJson<ReadingState>(`/api/papers/${encodeURIComponent(id)}/reading-state`)
 }
 
-export function saveReadingState(id: string, payload: Omit<ReadingState, 'paperId' | 'updatedAt'>) {
+export function saveReadingState(
+  id: string,
+  payload: Omit<ReadingState, 'paperId' | 'updatedAt'>,
+  options?: { keepalive?: boolean },
+) {
   return requestJson<ReadingState>(
     `/api/papers/${encodeURIComponent(id)}/reading-state`,
     {
@@ -52,6 +56,7 @@ export function saveReadingState(id: string, payload: Omit<ReadingState, 'paperI
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+      keepalive: options?.keepalive,
     },
   )
 }

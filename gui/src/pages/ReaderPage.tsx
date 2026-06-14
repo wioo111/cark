@@ -22,6 +22,7 @@ import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type { CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { findBestAnnotationMatch, normalizeAnnotationText, resolveAnnotationAnchor } from '@/utils/annotationLocator'
 import { extractOutline, formatUpdatedAt, resolvePaperView } from '@/utils/paper'
+import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
 
 const viewOptions: Array<{ key: PaperView; label: string }> = [
   { key: 'linearized', label: '结构化原文' },
@@ -56,7 +57,7 @@ export default function ReaderPage() {
   const articleRef = useRef<HTMLDivElement | null>(null)
   const restoredScrollRef = useRef(0)
   const restoreCompleteRef = useRef(false)
-  const scrollSaveTimerRef = useRef<number | null>(null)
+  const readingSaveSchedulerRef = useRef<SaveScheduler | null>(null)
   const latestReadingStateRef = useRef<{
     view: PaperView
     activeSectionId: string | null
@@ -161,6 +162,56 @@ export default function ReaderPage() {
   }, [activeSectionId, activeView, draft])
 
   useEffect(() => {
+    if (!detail || !readingStateLoaded) {
+      return
+    }
+    const scheduler = createSaveScheduler(async (keepalive) => {
+      const snapshot = latestReadingStateRef.current
+      try {
+        await saveReadingState(
+          detail.id,
+          {
+            view: snapshot.view,
+            scrollY: window.scrollY,
+            activeSectionId: snapshot.activeSectionId,
+            draft: snapshot.draft,
+          },
+          { keepalive },
+        )
+      } catch (saveError) {
+        if (!keepalive) {
+          setReadingStateError(
+            saveError instanceof Error
+              ? `阅读进度保存失败：${saveError.message}`
+              : '阅读进度保存失败',
+          )
+        }
+      }
+    })
+    readingSaveSchedulerRef.current = scheduler
+
+    const flushBeforeLeave = () => {
+      void scheduler.flush(true)
+    }
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') {
+        flushBeforeLeave()
+      }
+    }
+    window.addEventListener('pagehide', flushBeforeLeave)
+    document.addEventListener('visibilitychange', flushWhenHidden)
+
+    return () => {
+      window.removeEventListener('pagehide', flushBeforeLeave)
+      document.removeEventListener('visibilitychange', flushWhenHidden)
+      if (readingSaveSchedulerRef.current === scheduler) {
+        readingSaveSchedulerRef.current = null
+      }
+      void scheduler.dispose()
+    }
+  }, [detail, readingStateLoaded])
+
+  useEffect(() => {
     if (!detail || loading || !readingStateLoaded || restoreCompleteRef.current) {
       return
     }
@@ -183,21 +234,7 @@ export default function ReaderPage() {
     if (!detail || !readingStateLoaded || !restoreCompleteRef.current) {
       return
     }
-    const timer = window.setTimeout(() => {
-      void saveReadingState(detail.id, {
-        view: activeView,
-        scrollY: window.scrollY,
-        activeSectionId,
-        draft,
-      }).catch((saveError) => {
-        setReadingStateError(
-          saveError instanceof Error
-            ? `阅读进度保存失败：${saveError.message}`
-            : '阅读进度保存失败',
-        )
-      })
-    }, 350)
-    return () => window.clearTimeout(timer)
+    readingSaveSchedulerRef.current?.schedule(350)
   }, [activeSectionId, activeView, detail, draft, readingStateLoaded])
 
   useEffect(() => {
@@ -208,33 +245,12 @@ export default function ReaderPage() {
       if (!restoreCompleteRef.current) {
         return
       }
-      if (scrollSaveTimerRef.current !== null) {
-        window.clearTimeout(scrollSaveTimerRef.current)
-      }
-      scrollSaveTimerRef.current = window.setTimeout(() => {
-        const snapshot = latestReadingStateRef.current
-        void saveReadingState(detail.id, {
-          view: snapshot.view,
-          scrollY: window.scrollY,
-          activeSectionId: snapshot.activeSectionId,
-          draft: snapshot.draft,
-        }).catch((saveError) => {
-          setReadingStateError(
-            saveError instanceof Error
-              ? `阅读进度保存失败：${saveError.message}`
-              : '阅读进度保存失败',
-          )
-        })
-      }, 300)
+      readingSaveSchedulerRef.current?.schedule(300)
     }
 
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => {
       window.removeEventListener('scroll', handleScroll)
-      if (scrollSaveTimerRef.current !== null) {
-        window.clearTimeout(scrollSaveTimerRef.current)
-        scrollSaveTimerRef.current = null
-      }
     }
   }, [detail, readingStateLoaded])
 

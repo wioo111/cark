@@ -32,7 +32,7 @@ def split_into_chunks(markdown_text, max_chunk_length=1500):
         
     return chunks
 
-def translate_chunk(chunk, api_key, base_url, max_retries=3):
+def translate_chunk(chunk, api_key, base_url, model, max_retries=3):
     """Translates a markdown chunk while preserving its structure.
 
     返回 (translated_text, ok)。ok=False 表示翻译失败、已退回原文。
@@ -66,7 +66,7 @@ Here is the text to translate:
     }
 
     payload = {
-        "model": "deepseek-chat",
+        "model": model,
         "messages": [
             {"role": "system", "content": "You are a professional academic translator. Preserve all markdown formatting and LaTeX formulas."},
             {"role": "user", "content": prompt}
@@ -96,9 +96,12 @@ Here is the text to translate:
 def translate_file(input_path, output_path=None):
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    model = os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
 
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable is not set.")
+    if not model:
+        raise ValueError("OPENAI_MODEL environment variable is not set.")
 
     # 失败 chunk 占比超过此阈值则整体报错（避免产出"半翻译"文档却以为成功）。
     try:
@@ -114,7 +117,7 @@ def translate_file(input_path, output_path=None):
     print(f"Translating {input_path.name} ({len(chunks)} chunks)...")
     for i, chunk in enumerate(chunks):
         print(f"  Translating chunk {i+1}/{len(chunks)}...")
-        translated_chunk, ok = translate_chunk(chunk, api_key, base_url)
+        translated_chunk, ok = translate_chunk(chunk, api_key, base_url, model)
         translated_chunks.append(translated_chunk)
         if not ok:
             failed_indices.append(i + 1)

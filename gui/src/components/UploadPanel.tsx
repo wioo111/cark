@@ -3,16 +3,24 @@ import { useRef, useState } from 'react'
 
 interface UploadPanelProps {
   uploading: boolean
+  disabled: boolean
+  disabledReason?: string | null
   error: string | null
   onUpload: (file: File) => void
 }
 
-export function UploadPanel({ uploading, error, onUpload }: UploadPanelProps) {
+export function UploadPanel({
+  uploading,
+  disabled,
+  disabledReason,
+  error,
+  onUpload,
+}: UploadPanelProps) {
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   function selectFile(file: File | undefined) {
-    if (file) {
+    if (file && !disabled) {
       onUpload(file)
     }
     if (fileInputRef.current) {
@@ -30,6 +38,9 @@ export function UploadPanel({ uploading, error, onUpload }: UploadPanelProps) {
       onDrop={(event) => {
         event.preventDefault()
         setDragActive(false)
+        if (disabled) {
+          return
+        }
         selectFile(event.dataTransfer.files?.[0])
       }}
       className={[
@@ -47,21 +58,25 @@ export function UploadPanel({ uploading, error, onUpload }: UploadPanelProps) {
         </div>
         <button
           type="button"
-          disabled={uploading}
+          disabled={uploading || disabled}
           onClick={() => fileInputRef.current?.click()}
           className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-300/15 px-5 py-3 text-sm font-medium text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {uploading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
-          {uploading ? '正在上传' : '选择 PDF'}
+          {uploading ? '正在上传' : disabled ? '暂不可上传' : '选择 PDF'}
         </button>
       </div>
       <input
         ref={fileInputRef}
         type="file"
         accept=".pdf,application/pdf"
+        disabled={disabled}
         className="hidden"
         onChange={(event) => selectFile(event.target.files?.[0])}
       />
+      {disabledReason ? (
+        <p className="mt-4 text-sm text-amber-100/80">{disabledReason}</p>
+      ) : null}
       {error ? (
         <div className="mt-4 rounded-[18px] border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
           {error}

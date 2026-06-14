@@ -252,6 +252,11 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                   onChange={(value) => updateDraft('translation', { ...draft.translation, baseUrl: value })}
                 />
                 <TextField
+                  label="翻译模型"
+                  value={draft.translation.model}
+                  onChange={(value) => updateDraft('translation', { ...draft.translation, model: value })}
+                />
+                <TextField
                   label="翻译失败阈值"
                   type="number"
                   value={String(draft.translation.failRatioLimit)}

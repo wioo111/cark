@@ -165,6 +165,7 @@ export interface AppSettings {
     enabled: boolean
     apiKey: string
     baseUrl: string
+    model: string
     failRatioLimit: number
   }
   publish: {

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gui_storage import WorkbenchStore, format_task_command
+from gui_storage import SingleInstanceLock, WorkbenchStore, format_task_command
 
 
 class WorkbenchStoreTests(unittest.TestCase):
@@ -26,21 +26,60 @@ class WorkbenchStoreTests(unittest.TestCase):
             "logs": ["started"],
             "result": None,
         }
-        self.store.create_task(task, "D:/runtime/uploads/paper.pdf")
+        self.store.create_task(task, "D:/runtime/uploads/paper.pdf", "owner-1")
 
         reopened = WorkbenchStore(self.store.database_path)
         self.assertEqual(reopened.get_task("task-1")["status"], "running")
-        self.assertEqual(reopened.mark_active_tasks_interrupted("2026-06-13T10:02:00"), 1)
+        self.assertEqual(
+            reopened.mark_orphaned_active_tasks_interrupted(
+                "owner-2",
+                "2026-06-13T10:02:00",
+            ),
+            1,
+        )
 
         interrupted = reopened.get_task("task-1")
         self.assertEqual(interrupted["status"], "interrupted")
         self.assertIn("重试", interrupted["error"])
 
-        reopened.reset_task_for_retry("task-1", "2026-06-13T10:03:00")
+        reopened.reset_task_for_retry("task-1", "owner-2", "2026-06-13T10:03:00")
         retried = reopened.get_task("task-1")
         self.assertEqual(retried["status"], "queued")
         self.assertEqual(retried["progress"], 0)
         self.assertIsNone(retried["error"])
+        runtime = reopened.get_task_runtime("task-1")
+        self.assertEqual(runtime["ownerId"], "owner-2")
+        self.assertIsNone(runtime["workerPid"])
+
+    def test_current_owner_tasks_are_not_interrupted(self):
+        task = {
+            "id": "task-owner",
+            "fileName": "paper.pdf",
+            "status": "running",
+            "stage": "PDF解析",
+            "progress": 38,
+            "createdAt": "2026-06-13T10:00:00",
+            "updatedAt": "2026-06-13T10:01:00",
+            "error": None,
+            "logs": [],
+            "result": None,
+        }
+        self.store.create_task(task, "D:/paper.pdf", "owner-current")
+        self.store.update_task(
+            "task-owner",
+            "2026-06-13T10:01:30",
+            workerPid=4321,
+        )
+        self.assertEqual(
+            self.store.get_task_runtime("task-owner"),
+            {"ownerId": "owner-current", "workerPid": 4321},
+        )
+        changed = self.store.mark_orphaned_active_tasks_interrupted(
+            "owner-current",
+            "2026-06-13T10:02:00",
+        )
+        self.assertEqual(changed, 0)
+        self.assertEqual(self.store.get_task("task-owner")["status"], "running")
 
     def test_paper_index_and_reading_state_survive_reopen(self):
         paper = {
@@ -72,6 +111,46 @@ class WorkbenchStoreTests(unittest.TestCase):
         self.assertEqual(state["view"], "bilingual")
         self.assertEqual(state["scrollY"], 840.5)
         self.assertEqual(state["draft"]["content"], "unfinished")
+
+    def test_paper_sync_removes_missing_records(self):
+        first = {
+            "id": "paper-1",
+            "title": "First",
+            "taskId": None,
+            "rootDir": "D:/papers/first",
+            "autoDir": "D:/papers/first/auto",
+            "updatedAt": 1,
+            "availableViews": ["linearized"],
+            "sourcePdf": None,
+            "files": {"linearized": "D:/papers/first.md"},
+        }
+        second = {
+            **first,
+            "id": "paper-2",
+            "title": "Second",
+            "rootDir": "D:/papers/second",
+            "autoDir": "D:/papers/second/auto",
+        }
+        self.store.sync_papers([first, second], "2026-06-13T10:00:00")
+        self.store.save_reading_state(
+            "paper-1",
+            {
+                "view": "linearized",
+                "scrollY": 320,
+                "activeSectionId": "section-1",
+                "draft": {"content": "keep this draft"},
+            },
+            "2026-06-13T10:00:30",
+        )
+        self.store.sync_papers([second], "2026-06-13T10:01:00")
+        self.assertEqual(
+            [paper["id"] for paper in self.store.list_papers()],
+            ["paper-2"],
+        )
+        self.assertEqual(
+            self.store.get_reading_state("paper-1")["draft"]["content"],
+            "keep this draft",
+        )
 
     def test_task_command_masks_secrets(self):
         formatted = format_task_command(
@@ -108,9 +187,19 @@ class WorkbenchStoreTests(unittest.TestCase):
             "logs": ["run --api-token secret-token --app-secret secret-app --folder-token folder-secret"],
             "result": None,
         }
-        self.store.create_task(task, "D:/paper.pdf")
+        self.store.create_task(task, "D:/paper.pdf", "owner-1")
         saved = self.store.get_task("task-secret")
         self.assertEqual(saved["logs"], ["run --api-token *** --app-secret *** --folder-token ***"])
+
+    def test_single_instance_lock_rejects_second_holder(self):
+        lock_path = Path(self.temp_dir.name) / "gui.lock"
+        first = SingleInstanceLock(lock_path)
+        second = SingleInstanceLock(lock_path)
+        self.assertTrue(first.acquire())
+        self.assertFalse(second.acquire())
+        first.release()
+        self.assertTrue(second.acquire())
+        second.release()
 
 
 if __name__ == "__main__":

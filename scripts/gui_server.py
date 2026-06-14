@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
-from gui_storage import WorkbenchStore, format_task_command
+from gui_storage import SingleInstanceLock, WorkbenchStore, format_task_command
+from process_utils import is_process_alive
 
 
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,7 @@ CONFIG_DIR = WORKBENCH_ROOT / "config"
 RUNTIME_OUTPUT_DIR = WORKBENCH_ROOT / "runtime" / "output"
 MEMORY_ROOT_DIR = WORKBENCH_ROOT / "runtime" / "memory"
 DATABASE_PATH = WORKBENCH_ROOT / "runtime" / "cark.sqlite3"
+INSTANCE_LOCK_PATH = WORKBENCH_ROOT / "runtime" / "locks" / "gui_server.lock"
 GUI_SETTINGS_PATH = CONFIG_DIR / "gui_settings.json"
 GUI_UPLOADS_DIR = WORKBENCH_ROOT / "runtime" / "uploads" / "gui"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
@@ -47,6 +49,7 @@ PROXY_ENV_KEYS = (
     "no_proxy",
 )
 STORE = WorkbenchStore(DATABASE_PATH)
+SERVER_INSTANCE_ID = f"{os.getpid()}-{uuid.uuid4().hex}"
 
 
 @dataclass
@@ -182,6 +185,7 @@ def default_gui_settings() -> dict[str, object]:
             "enabled": bool(pipeline.get("translate", False)),
             "apiKey": str(os.getenv("OPENAI_API_KEY") or ""),
             "baseUrl": str(os.getenv("OPENAI_BASE_URL") or "https://api.deepseek.com/v1"),
+            "model": str(os.getenv("OPENAI_MODEL") or "deepseek-chat"),
             "failRatioLimit": float(os.getenv("TRANSLATE_FAIL_RATIO_LIMIT") or 0.2),
         },
         "publish": {
@@ -270,6 +274,7 @@ def sanitize_gui_settings(payload: dict[str, object]) -> dict[str, object]:
             "enabled": bool(translation.get("enabled", defaults["translation"]["enabled"])),
             "apiKey": str(translation.get("apiKey") or "").strip(),
             "baseUrl": str(translation.get("baseUrl") or defaults["translation"]["baseUrl"]).strip(),
+            "model": str(translation.get("model") or defaults["translation"]["model"]).strip(),
             "failRatioLimit": min(max(fail_ratio_limit, 0.0), 1.0),
         },
         "publish": {
@@ -321,6 +326,7 @@ def detect_capabilities(settings: Optional[dict[str, object]] = None) -> dict[st
     current = settings or load_gui_settings()
     mineru = current.get("mineru") if isinstance(current.get("mineru"), dict) else {}
     translation = current.get("translation") if isinstance(current.get("translation"), dict) else {}
+    publish = current.get("publish") if isinstance(current.get("publish"), dict) else {}
     local_candidates = [
         WORKBENCH_ROOT / ".venv" / "Scripts" / "mineru.exe",
         WORKBENCH_ROOT / ".venv" / "bin" / "mineru",
@@ -357,6 +363,24 @@ def detect_capabilities(settings: Optional[dict[str, object]] = None) -> dict[st
                 "action": "填写翻译 API Key，或关闭双语翻译。",
             }
         )
+    if not bool(publish.get("prepareOnly", True)):
+        missing_publish = [
+            label
+            for key, label in (
+                ("folderToken", "目标文件夹"),
+                ("appId", "App ID"),
+                ("appSecret", "App Secret"),
+            )
+            if not str(publish.get(key) or "").strip()
+        ]
+        if missing_publish:
+            issues.append(
+                {
+                    "code": "publish-credentials-missing",
+                    "message": "协作平台导出已开启，但配置不完整。",
+                    "action": "在高级设置中补齐：" + "、".join(missing_publish) + "。",
+                }
+            )
 
     return {
         "ready": not issues,
@@ -374,6 +398,18 @@ def detect_capabilities(settings: Optional[dict[str, object]] = None) -> dict[st
             "message": "翻译凭据已配置" if translation_configured else "翻译凭据未配置",
         },
     }
+
+
+def ensure_upload_ready(settings: Optional[dict[str, object]] = None):
+    capabilities = detect_capabilities(settings)
+    issues = capabilities.get("issues")
+    if isinstance(issues, list) and issues:
+        messages = [
+            f"{issue.get('message', '')} {issue.get('action', '')}".strip()
+            for issue in issues
+            if isinstance(issue, dict)
+        ]
+        raise ValueError("当前环境还不能上传：" + " ".join(messages))
 
 
 def test_mineru_connection(settings: dict[str, object]) -> dict[str, object]:
@@ -410,13 +446,16 @@ def test_translation_connection(settings: dict[str, object]) -> dict[str, object
     translation = settings.get("translation") if isinstance(settings.get("translation"), dict) else {}
     api_key = str(translation.get("apiKey") or "").strip()
     base_url = str(translation.get("baseUrl") or "https://api.deepseek.com/v1").strip()
+    model = str(translation.get("model") or "deepseek-chat").strip()
     if not api_key:
         raise ValueError("请先填写翻译 API Key")
     if not base_url:
         raise ValueError("请先填写翻译 Base URL")
+    if not model:
+        raise ValueError("请先填写翻译模型")
 
     payload = {
-        "model": "deepseek-chat",
+        "model": model,
         "messages": [
             {"role": "system", "content": "You are a connectivity test assistant."},
             {"role": "user", "content": "Reply with exactly: ok"},
@@ -576,6 +615,7 @@ def build_task_command(file_path: Path, settings: dict[str, object]) -> tuple[li
     env = build_direct_network_env()
     env["OPENAI_API_KEY"] = str(translation_settings.get("apiKey") or "")
     env["OPENAI_BASE_URL"] = str(translation_settings.get("baseUrl") or "https://api.deepseek.com/v1")
+    env["OPENAI_MODEL"] = str(translation_settings.get("model") or "deepseek-chat")
     env["TRANSLATE_FAIL_RATIO_LIMIT"] = str(translation_settings.get("failRatioLimit") or 0.2)
 
     safe_stem = sanitize_ascii_stem(file_path.stem)
@@ -602,7 +642,13 @@ def run_upload_task(task_id: str, file_path: Path):
     try:
         settings = load_gui_settings()
         command, env, mineru_log = build_task_command(file_path, settings)
-        update_task(task_id, status="running", stage="准备执行", progress=5)
+        update_task(
+            task_id,
+            status="running",
+            stage="准备执行",
+            progress=5,
+            ownerId=SERVER_INSTANCE_ID,
+        )
         append_task_log(task_id, f"$ {format_task_command(command)}", stage="准备执行", progress=5)
         process = subprocess.Popen(
             command,
@@ -615,6 +661,7 @@ def run_upload_task(task_id: str, file_path: Path):
             errors="replace",
             bufsize=1,
         )
+        update_task(task_id, workerPid=process.pid)
         output_lines: list[str] = []
         stdout_queue: queue.Queue[str | None] = queue.Queue()
 
@@ -665,7 +712,14 @@ def run_upload_task(task_id: str, file_path: Path):
             error_lines = [line for line in reversed(output_lines) if line.strip()]
             if error_lines:
                 message = error_lines[0].strip()
-            update_task(task_id, status="failed", stage="执行失败", progress=100, error=message)
+            update_task(
+                task_id,
+                status="failed",
+                stage="执行失败",
+                progress=100,
+                error=message,
+                workerPid=None,
+            )
             return
 
         result = {"paperId": None, "paperTitle": None, "output": payload}
@@ -674,10 +728,25 @@ def run_upload_task(task_id: str, file_path: Path):
             if record:
                 result["paperId"] = record.paper_id
                 result["paperTitle"] = record.title
-        update_task(task_id, status="succeeded", stage="处理完成", progress=100, result=result, error=None)
+        update_task(
+            task_id,
+            status="succeeded",
+            stage="处理完成",
+            progress=100,
+            result=result,
+            error=None,
+            workerPid=None,
+        )
         append_task_log(task_id, "任务完成", stage="处理完成", progress=100)
     except Exception as error:
-        update_task(task_id, status="failed", stage="执行失败", progress=100, error=str(error))
+        update_task(
+            task_id,
+            status="failed",
+            stage="执行失败",
+            progress=100,
+            error=str(error),
+            workerPid=None,
+        )
         append_task_log(task_id, f"ERROR: {error}", stage="执行失败", progress=100)
 
 
@@ -701,7 +770,7 @@ def create_upload_task(file_name: str, content: bytes) -> dict[str, object]:
         "logs": [f"已接收文件: {safe_name}"],
         "result": None,
     }
-    STORE.create_task(task, str(staged_path))
+    STORE.create_task(task, str(staged_path), SERVER_INSTANCE_ID)
     threading.Thread(target=run_upload_task, args=(task_id, staged_path), daemon=True).start()
     return snapshot_task(task_id) or task
 
@@ -713,7 +782,11 @@ def retry_upload_task(task_id: str) -> dict[str, object]:
     staged_path = Path(source_path)
     if not staged_path.exists():
         raise FileNotFoundError("原始上传文件已被移除，请重新上传 PDF")
-    STORE.reset_task_for_retry(task_id, current_timestamp_iso())
+    runtime = STORE.get_task_runtime(task_id)
+    worker_pid = runtime.get("workerPid") if runtime else None
+    if isinstance(worker_pid, int) and is_process_alive(worker_pid):
+        raise ValueError("上一次处理进程仍在运行，暂时不能重复启动")
+    STORE.reset_task_for_retry(task_id, SERVER_INSTANCE_ID, current_timestamp_iso())
     threading.Thread(target=run_upload_task, args=(task_id, staged_path), daemon=True).start()
     task = snapshot_task(task_id)
     if not task:
@@ -864,13 +937,12 @@ def deserialize_paper_record(payload: dict[str, object]) -> Optional[PaperRecord
     )
 
 
-def sync_paper_index():
+def sync_paper_index(store: WorkbenchStore = STORE):
     discovered = discover_records()
-    if discovered:
-        STORE.upsert_papers(
-            [serialize_paper_record(record) for record in discovered.values()],
-            current_timestamp_iso(),
-        )
+    store.sync_papers(
+        [serialize_paper_record(record) for record in discovered.values()],
+        current_timestamp_iso(),
+    )
 
 
 def indexed_records(*, refresh: bool = False) -> dict[str, PaperRecord]:
@@ -1498,6 +1570,7 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
             if not isinstance(file_name, str) or not file_name.strip():
                 return self.write_json({"error": "缺少文件名"}, status=HTTPStatus.BAD_REQUEST)
             try:
+                ensure_upload_ready()
                 task = create_upload_task(file_name, self.read_binary_body())
             except ValueError as error:
                 return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
@@ -1628,11 +1701,44 @@ def build_parser():
     return parser
 
 
+def prepare_gui_server(
+    host: str,
+    port: int,
+    *,
+    store: WorkbenchStore = STORE,
+    owner_id: str = SERVER_INSTANCE_ID,
+    instance_lock: Optional[SingleInstanceLock] = None,
+    server_factory=ThreadingHTTPServer,
+):
+    lock = instance_lock or SingleInstanceLock(INSTANCE_LOCK_PATH)
+    if not lock.acquire():
+        raise RuntimeError("cark 已经在运行，请使用现有窗口")
+    try:
+        server = server_factory((host, port), GuiRequestHandler)
+    except Exception:
+        lock.release()
+        raise
+
+    try:
+        interrupted_count = store.mark_orphaned_active_tasks_interrupted(
+            owner_id,
+            current_timestamp_iso(),
+        )
+        sync_paper_index(store)
+    except Exception:
+        server.server_close()
+        lock.release()
+        raise
+    return server, lock, interrupted_count
+
+
 def main():
     args = build_parser().parse_args()
-    interrupted_count = STORE.mark_active_tasks_interrupted(current_timestamp_iso())
-    sync_paper_index()
-    server = ThreadingHTTPServer((args.host, args.port), GuiRequestHandler)
+    try:
+        server, instance_lock, interrupted_count = prepare_gui_server(args.host, args.port)
+    except (OSError, RuntimeError) as error:
+        print(f"无法启动 cark GUI: {error}", file=sys.stderr)
+        return 2
     print(f"cark GUI listening on http://{args.host}:{args.port}/")
     if interrupted_count:
         print(f"[cark-gui] 已将 {interrupted_count} 个未完成任务标记为已中断。")
@@ -1644,7 +1750,9 @@ def main():
         pass
     finally:
         server.server_close()
+        instance_lock.release()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

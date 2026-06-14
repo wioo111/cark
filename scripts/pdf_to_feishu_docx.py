@@ -16,6 +16,7 @@ from content_list_to_feishu_docx import (
     resolve_path,
     linearize_content_list_file,
 )
+from process_utils import is_process_alive
 from upload_md_to_feishu import FeishuApiError
 
 
@@ -346,12 +347,7 @@ class _ParseLock:
             pid = int(pid_text)
         except (OSError, ValueError):
             return False
-        try:
-            import psutil
-
-            return not psutil.pid_exists(pid)
-        except ImportError:
-            return False
+        return not is_process_alive(pid)
 
     def __exit__(self, *exc):
         if self._fd is not None:

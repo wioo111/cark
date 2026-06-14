@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -32,6 +33,54 @@ def redact_task_log_line(line: str) -> str:
         line,
         flags=re.IGNORECASE,
     )
+
+
+class SingleInstanceLock:
+    def __init__(self, path: Path):
+        self.path = path
+        self._handle = None
+
+    def acquire(self) -> bool:
+        if self._handle is not None:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+b")
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError):
+            handle.close()
+            return False
+        self._handle = handle
+        return True
+
+    def release(self):
+        handle = self._handle
+        if handle is None:
+            return
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+            self._handle = None
 
 
 class WorkbenchStore:
@@ -72,7 +121,9 @@ class WorkbenchStore:
                     error TEXT,
                     logs_json TEXT NOT NULL,
                     result_json TEXT,
-                    source_path TEXT
+                    source_path TEXT,
+                    owner_id TEXT,
+                    worker_pid INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS papers (
@@ -98,6 +149,14 @@ class WorkbenchStore:
                 );
                 """
             )
+            task_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "owner_id" not in task_columns:
+                connection.execute("ALTER TABLE tasks ADD COLUMN owner_id TEXT")
+            if "worker_pid" not in task_columns:
+                connection.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
             rows = connection.execute("SELECT id, logs_json FROM tasks").fetchall()
             for row in rows:
                 logs = _load_json(row["logs_json"], [])
@@ -113,14 +172,14 @@ class WorkbenchStore:
                         (_dump_json(sanitized), row["id"]),
                     )
 
-    def create_task(self, task: dict[str, object], source_path: str | None):
+    def create_task(self, task: dict[str, object], source_path: str | None, owner_id: str):
         with self._lock, self._connection() as connection:
             connection.execute(
                 """
                 INSERT INTO tasks (
                     id, file_name, status, stage, progress, created_at, updated_at,
-                    error, logs_json, result_json, source_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error, logs_json, result_json, source_path, owner_id, worker_pid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task["id"],
@@ -139,6 +198,8 @@ class WorkbenchStore:
                     ),
                     _dump_json(task.get("result")) if task.get("result") is not None else None,
                     source_path,
+                    owner_id,
+                    None,
                 ),
             )
 
@@ -151,6 +212,19 @@ class WorkbenchStore:
         with self._lock, self._connection() as connection:
             row = connection.execute("SELECT source_path FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return str(row["source_path"]) if row and row["source_path"] else None
+
+    def get_task_runtime(self, task_id: str) -> dict[str, object] | None:
+        with self._lock, self._connection() as connection:
+            row = connection.execute(
+                "SELECT owner_id, worker_pid FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "ownerId": row["owner_id"],
+            "workerPid": int(row["worker_pid"]) if row["worker_pid"] is not None else None,
+        }
 
     def list_tasks(self) -> list[dict[str, object]]:
         with self._lock, self._connection() as connection:
@@ -166,6 +240,8 @@ class WorkbenchStore:
             "error": "error",
             "logs": "logs_json",
             "result": "result_json",
+            "ownerId": "owner_id",
+            "workerPid": "worker_pid",
         }
         assignments = ["updated_at = ?"]
         values: list[object] = [updated_at]
@@ -216,7 +292,7 @@ class WorkbenchStore:
                 values,
             )
 
-    def mark_active_tasks_interrupted(self, updated_at: str) -> int:
+    def mark_orphaned_active_tasks_interrupted(self, owner_id: str, updated_at: str) -> int:
         message = "服务在任务完成前停止。请确认配置后重试。"
         with self._lock, self._connection() as connection:
             cursor = connection.execute(
@@ -227,12 +303,13 @@ class WorkbenchStore:
                     error = ?,
                     updated_at = ?
                 WHERE status IN ('queued', 'running')
+                  AND (owner_id IS NULL OR owner_id != ?)
                 """,
-                (message, updated_at),
+                (message, updated_at, owner_id),
             )
             return cursor.rowcount
 
-    def reset_task_for_retry(self, task_id: str, updated_at: str):
+    def reset_task_for_retry(self, task_id: str, owner_id: str, updated_at: str):
         with self._lock, self._connection() as connection:
             row = connection.execute(
                 "SELECT status, logs_json FROM tasks WHERE id = ?",
@@ -255,47 +332,72 @@ class WorkbenchStore:
                     error = NULL,
                     result_json = NULL,
                     logs_json = ?,
+                    owner_id = ?,
+                    worker_pid = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (_dump_json(logs[-240:]), updated_at, task_id),
+                (_dump_json(logs[-240:]), owner_id, updated_at, task_id),
             )
 
     def upsert_papers(self, papers: list[dict[str, object]], indexed_at: str):
         with self._lock, self._connection() as connection:
-            connection.executemany(
-                """
-                INSERT INTO papers (
-                    id, title, task_id, root_dir, auto_dir, updated_at,
-                    available_views_json, source_pdf, files_json, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    title = excluded.title,
-                    task_id = excluded.task_id,
-                    root_dir = excluded.root_dir,
-                    auto_dir = excluded.auto_dir,
-                    updated_at = excluded.updated_at,
-                    available_views_json = excluded.available_views_json,
-                    source_pdf = excluded.source_pdf,
-                    files_json = excluded.files_json,
-                    indexed_at = excluded.indexed_at
-                """,
-                [
-                    (
-                        paper["id"],
-                        paper["title"],
-                        paper.get("taskId"),
-                        paper["rootDir"],
-                        paper["autoDir"],
-                        float(paper["updatedAt"]),
-                        _dump_json(paper.get("availableViews") or []),
-                        paper.get("sourcePdf"),
-                        _dump_json(paper.get("files") or {}),
-                        indexed_at,
-                    )
-                    for paper in papers
-                ],
+            self._upsert_papers(connection, papers, indexed_at)
+
+    def sync_papers(self, papers: list[dict[str, object]], indexed_at: str):
+        with self._lock, self._connection() as connection:
+            self._upsert_papers(connection, papers, indexed_at)
+            connection.execute(
+                "CREATE TEMP TABLE current_paper_ids (id TEXT PRIMARY KEY)"
             )
+            connection.executemany(
+                "INSERT INTO current_paper_ids (id) VALUES (?)",
+                [(paper["id"],) for paper in papers],
+            )
+            connection.execute(
+                "DELETE FROM papers WHERE id NOT IN (SELECT id FROM current_paper_ids)"
+            )
+            connection.execute("DROP TABLE current_paper_ids")
+
+    def _upsert_papers(
+        self,
+        connection: sqlite3.Connection,
+        papers: list[dict[str, object]],
+        indexed_at: str,
+    ):
+        connection.executemany(
+            """
+            INSERT INTO papers (
+                id, title, task_id, root_dir, auto_dir, updated_at,
+                available_views_json, source_pdf, files_json, indexed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                task_id = excluded.task_id,
+                root_dir = excluded.root_dir,
+                auto_dir = excluded.auto_dir,
+                updated_at = excluded.updated_at,
+                available_views_json = excluded.available_views_json,
+                source_pdf = excluded.source_pdf,
+                files_json = excluded.files_json,
+                indexed_at = excluded.indexed_at
+            """,
+            [
+                (
+                    paper["id"],
+                    paper["title"],
+                    paper.get("taskId"),
+                    paper["rootDir"],
+                    paper["autoDir"],
+                    float(paper["updatedAt"]),
+                    _dump_json(paper.get("availableViews") or []),
+                    paper.get("sourcePdf"),
+                    _dump_json(paper.get("files") or {}),
+                    indexed_at,
+                )
+                for paper in papers
+            ],
+        )
 
     def list_papers(self) -> list[dict[str, object]]:
         with self._lock, self._connection() as connection:
