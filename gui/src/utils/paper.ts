@@ -30,6 +30,7 @@ export function extractBilingualOutline(
   }))
   const bilingualHeadings = Array.from(bilingualMarkdown.matchAll(outlinePattern)).map((match, index) => ({
     id: `section-${index + 1}`,
+    level: match[1].length,
     text: match[2].trim(),
   }))
   let cursor = 0
@@ -43,10 +44,12 @@ export function extractBilingualOutline(
     if (matchIndex < 0) {
       continue
     }
+    const translatedText = findTranslatedHeading(bilingualHeadings, matchIndex)
     outline.push({
       id: bilingualHeadings[matchIndex].id,
       level: original.level,
       text: original.text,
+      translatedText,
     })
     cursor = matchIndex + 1
   }
@@ -60,6 +63,24 @@ function normalizeHeading(value: string) {
     .toLocaleLowerCase()
     .replace(/[.:：。]\s*$/g, '')
     .replace(/\s+/g, ' ')
+}
+
+function findTranslatedHeading(
+  headings: Array<{ id: string; level: number; text: string }>,
+  originalIndex: number,
+) {
+  const original = headings[originalIndex]
+  const candidate = headings[originalIndex + 1]
+  if (!original || !candidate) {
+    return undefined
+  }
+  if (candidate.level !== original.level) {
+    return undefined
+  }
+  if (normalizeHeading(candidate.text) === normalizeHeading(original.text)) {
+    return undefined
+  }
+  return candidate.text
 }
 
 function dedupeOutline(outline: OutlineItem[]) {

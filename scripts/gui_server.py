@@ -1,5 +1,6 @@
 import argparse
 import base64
+import hashlib
 import importlib.util
 import json
 import mimetypes
@@ -70,6 +71,18 @@ class PaperRecord:
     available_views: list[str]
     source_pdf: Optional[str]
     files: dict[str, Optional[Path]]
+
+
+def default_copilot_agent() -> dict[str, object]:
+    return {
+        "id": "agent-default",
+        "enabled": True,
+        "name": "共读助手",
+        "rolePrompt": "你是用户的论文共读伙伴。先完整理解论文，再围绕用户划线句子的上下文给出具体、克制、有判断的评论。",
+        "apiKey": str(os.getenv("OPENROUTER_API_KEY") or ""),
+        "baseUrl": str(os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1"),
+        "model": str(os.getenv("OPENROUTER_MODEL") or ""),
+    }
 
 
 def current_timestamp_iso() -> str:
@@ -203,9 +216,7 @@ def default_gui_settings() -> dict[str, object]:
             "appSecret": str(os.getenv("FEISHU_APP_SECRET") or pipeline.get("app_secret") or ""),
         },
         "copilot": {
-            "apiKey": str(os.getenv("OPENROUTER_API_KEY") or ""),
-            "baseUrl": str(os.getenv("OPENROUTER_BASE_URL") or ""),
-            "model": str(os.getenv("OPENROUTER_MODEL") or ""),
+            "agents": [default_copilot_agent()],
         },
     }
 
@@ -228,10 +239,7 @@ def materialize_gui_settings() -> dict[str, object]:
                     **defaults["publish"],
                     **(existing.get("publish") if isinstance(existing.get("publish"), dict) else {}),
                 },
-                "copilot": {
-                    **defaults["copilot"],
-                    **(existing.get("copilot") if isinstance(existing.get("copilot"), dict) else {}),
-                },
+                "copilot": existing.get("copilot") if isinstance(existing.get("copilot"), dict) else defaults["copilot"],
             }
         )
     else:
@@ -269,6 +277,34 @@ def sanitize_gui_settings(payload: dict[str, object]) -> dict[str, object]:
     except (TypeError, ValueError):
         fail_ratio_limit = float(defaults["translation"]["failRatioLimit"])
 
+    raw_agents = copilot.get("agents") if isinstance(copilot.get("agents"), list) else None
+    if raw_agents is None and any(key in copilot for key in ("apiKey", "baseUrl", "model")):
+        raw_agents = [copilot]
+    if raw_agents is None:
+        raw_agents = defaults["copilot"]["agents"] if isinstance(defaults["copilot"], dict) else [default_copilot_agent()]
+
+    agents: list[dict[str, object]] = []
+    for index, item in enumerate(raw_agents[:8]):
+        if not isinstance(item, dict):
+            continue
+        default_agent = default_copilot_agent()
+        agent_id = str(item.get("id") or default_agent["id"] or f"agent-{index + 1}").strip()
+        if not agent_id:
+            agent_id = f"agent-{index + 1}"
+        agents.append(
+            {
+                "id": agent_id,
+                "enabled": bool(item.get("enabled", True)),
+                "name": str(item.get("name") or f"共读助手 {index + 1}").strip() or f"共读助手 {index + 1}",
+                "rolePrompt": str(item.get("rolePrompt") or default_agent["rolePrompt"]).strip(),
+                "apiKey": str(item.get("apiKey") or "").strip(),
+                "baseUrl": str(item.get("baseUrl") or default_agent["baseUrl"]).strip(),
+                "model": str(item.get("model") or default_agent["model"]).strip(),
+            }
+        )
+    if not agents:
+        agents = [default_copilot_agent()]
+
     return {
         "mineru": {
             "backend": backend,
@@ -292,9 +328,7 @@ def sanitize_gui_settings(payload: dict[str, object]) -> dict[str, object]:
             "appSecret": str(publish.get("appSecret") or "").strip(),
         },
         "copilot": {
-            "apiKey": str(copilot.get("apiKey") or "").strip(),
-            "baseUrl": str(copilot.get("baseUrl") or "").strip(),
-            "model": str(copilot.get("model") or "").strip(),
+            "agents": agents,
         },
     }
 
@@ -315,10 +349,7 @@ def load_gui_settings() -> dict[str, object]:
             **defaults["publish"],
             **(saved.get("publish") if isinstance(saved.get("publish"), dict) else {}),
         },
-        "copilot": {
-            **defaults["copilot"],
-            **(saved.get("copilot") if isinstance(saved.get("copilot"), dict) else {}),
-        },
+        "copilot": saved.get("copilot") if isinstance(saved.get("copilot"), dict) else defaults["copilot"],
     }
     return sanitize_gui_settings(merged)
 
@@ -1268,6 +1299,10 @@ def paper_annotations_dir(record: PaperRecord) -> Path:
     return paper_memory_dir(record) / "annotations"
 
 
+def paper_copilot_cache_dir(record: PaperRecord) -> Path:
+    return paper_memory_dir(record) / "copilot_cache"
+
+
 def default_memory_profile(record: PaperRecord) -> dict[str, object]:
     return {
         "paperId": record.paper_id,
@@ -1370,8 +1405,8 @@ def annotation_preview(content: str, *, limit: int = 72) -> str:
 
 def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object]:
     author_type = payload.get("authorType")
-    if author_type != "user":
-        raise ValueError("当前阶段只允许保存用户评论")
+    if author_type not in {"user", "agent"}:
+        raise ValueError("评论作者类型非法")
     author_label = payload.get("authorLabel")
     if not isinstance(author_label, str) or not author_label.strip():
         raise ValueError("评论作者名称不能为空")
@@ -1385,12 +1420,523 @@ def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object
         "id": f"comment-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
         "authorType": author_type,
         "authorLabel": author_label.strip(),
+        "agentId": str(payload.get("agentId") or "").strip() if author_type == "agent" else None,
+        "replyToCommentId": str(payload.get("replyToCommentId") or "").strip() or None,
+        "replyToAgentId": str(payload.get("replyToAgentId") or "").strip() or None,
+        "contextChunkIds": normalize_string_list(payload.get("contextChunkIds"), limit=8) if author_type == "agent" else [],
         "content": content.strip(),
         "preview": annotation_preview(content.strip()),
         "createdAt": timestamp,
         "updatedAt": timestamp,
         "status": "ready",
     }
+
+
+def resolve_copilot_agent(settings: dict[str, object], agent_id: str) -> dict[str, object]:
+    copilot = settings.get("copilot") if isinstance(settings.get("copilot"), dict) else {}
+    agents = copilot.get("agents") if isinstance(copilot.get("agents"), list) else []
+    for agent in agents:
+        if isinstance(agent, dict) and str(agent.get("id") or "").strip() == agent_id:
+            if not bool(agent.get("enabled", True)):
+                raise ValueError("这个智能体当前已停用")
+            missing_fields = [
+                label
+                for key, label in (
+                    ("apiKey", "API Key"),
+                    ("baseUrl", "Base URL"),
+                    ("model", "模型"),
+                )
+                if not str(agent.get(key) or "").strip()
+            ]
+            if missing_fields:
+                raise ValueError(f"智能体配置不完整，请补齐：{'、'.join(missing_fields)}")
+            return agent
+    raise ValueError("未找到指定智能体")
+
+
+def resolve_annotation_source_markdown(record: PaperRecord, view: str) -> str:
+    preferred_path = record.files.get("bilingual") if view == "bilingual" and record.files.get("bilingual") else record.files.get("linearized")
+    markdown = load_markdown(preferred_path) or ""
+    if not markdown.strip():
+        fallback = load_markdown(record.files.get("linearized")) or load_markdown(record.files.get("bilingual")) or ""
+        markdown = fallback
+    if not markdown.strip():
+        raise ValueError("当前论文还没有可供共读的正文内容")
+    return markdown.strip()
+
+
+def resolve_annotation_source_path(record: PaperRecord, view: str) -> Optional[Path]:
+    preferred_path = record.files.get("bilingual") if view == "bilingual" and record.files.get("bilingual") else record.files.get("linearized")
+    if preferred_path and preferred_path.exists():
+        return preferred_path
+    fallback = record.files.get("linearized") or record.files.get("bilingual")
+    if fallback and fallback.exists():
+        return fallback
+    return None
+
+
+def copilot_context_cache_path(record: PaperRecord, view: str) -> Path:
+    return paper_copilot_cache_dir(record) / f"{view}_context.json"
+
+
+def normalize_copilot_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value or "").strip().lower()
+
+
+def tokenize_copilot_query(value: str) -> list[str]:
+    normalized = normalize_copilot_text(value)
+    if not normalized:
+        return []
+    raw_tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9_/-]{2,}", normalized)
+    tokens: list[str] = []
+    for token in raw_tokens:
+        if token not in tokens:
+            tokens.append(token)
+    return tokens[:24]
+
+
+def extract_markdown_paragraphs(markdown: str) -> list[dict[str, str]]:
+    paragraphs: list[dict[str, str]] = []
+    current_heading = ""
+    for raw_block in re.split(r"\n\s*\n+", markdown):
+        block = raw_block.strip()
+        if not block:
+            continue
+        if block.startswith("```"):
+            continue
+        if block.startswith("#"):
+            heading = re.sub(r"^#+\s*", "", block).strip()
+            if heading:
+                current_heading = heading
+            continue
+        cleaned = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", block)
+        cleaned = re.sub(r"\[[^\]]+\]\([^)]+\)", " ", cleaned)
+        cleaned = re.sub(r"[>#*_`~\-]+", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if len(cleaned) < 24:
+            continue
+        paragraphs.append(
+            {
+                "heading": current_heading,
+                "text": cleaned[:1200],
+                "normalized": normalize_copilot_text(cleaned),
+            }
+        )
+    return paragraphs
+
+
+def build_copilot_context_cache(record: PaperRecord, view: str) -> dict[str, object]:
+    source_path = resolve_annotation_source_path(record, view)
+    markdown = resolve_annotation_source_markdown(record, view)
+    stats = source_path.stat() if source_path and source_path.exists() else None
+    digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+    paragraphs = extract_markdown_paragraphs(markdown)
+    headings: list[str] = []
+    for paragraph in paragraphs:
+        heading = paragraph.get("heading") or ""
+        if heading and heading not in headings:
+            headings.append(heading)
+        if len(headings) >= 10:
+            break
+    intro_parts = [item["text"] for item in paragraphs[:3]]
+    overview_parts: list[str] = [f"论文标题：{record.title}"]
+    if headings:
+        overview_parts.append("章节结构：" + " / ".join(headings[:8]))
+    if intro_parts:
+        overview_parts.append("开篇摘要：" + " ".join(intro_parts)[:1200])
+    chunks: list[dict[str, object]] = []
+    for index, paragraph in enumerate(paragraphs):
+        text = paragraph["text"]
+        heading = paragraph.get("heading") or ""
+        chunks.append(
+            {
+                "id": f"chunk-{index}",
+                "heading": heading,
+                "text": text,
+                "normalized": paragraph["normalized"],
+            }
+        )
+    cache_payload = {
+        "version": 1,
+        "paperId": record.paper_id,
+        "title": record.title,
+        "view": view,
+        "sourcePath": str(source_path) if source_path else None,
+        "sourceMtime": stats.st_mtime if stats else None,
+        "sourceSize": stats.st_size if stats else None,
+        "digest": digest,
+        "overview": "\n\n".join(part for part in overview_parts if part),
+        "headings": headings,
+        "chunks": chunks,
+    }
+    ensure_paper_memory(record)
+    write_json_file(copilot_context_cache_path(record, view), cache_payload)
+    return cache_payload
+
+
+def load_copilot_context_cache(record: PaperRecord, view: str) -> dict[str, object]:
+    cache_path = copilot_context_cache_path(record, view)
+    source_path = resolve_annotation_source_path(record, view)
+    source_stats = source_path.stat() if source_path and source_path.exists() else None
+    if cache_path.exists():
+        payload = load_json_object(cache_path)
+        if payload:
+            same_source = str(payload.get("sourcePath") or "") == str(source_path) if source_path else not payload.get("sourcePath")
+            same_mtime = payload.get("sourceMtime") == (source_stats.st_mtime if source_stats else None)
+            same_size = payload.get("sourceSize") == (source_stats.st_size if source_stats else None)
+            if same_source and same_mtime and same_size:
+                return payload
+    return build_copilot_context_cache(record, view)
+
+
+def render_relevant_chunks(chunks: list[dict[str, object]]) -> str:
+    parts: list[str] = []
+    for index, chunk in enumerate(chunks, start=1):
+        heading = str(chunk.get("heading") or "").strip()
+        text = str(chunk.get("text") or "").strip()
+        if not text:
+            continue
+        label = f"片段 {index}"
+        if heading:
+            label += f" | {heading}"
+        parts.append(f"[{label}]\n{text}")
+    return "\n\n".join(parts)
+
+
+def select_copilot_chunks_by_ids(
+    cache_payload: dict[str, object],
+    chunk_ids: list[str],
+    *,
+    limit: int = 4,
+) -> list[dict[str, object]]:
+    chunks = cache_payload.get("chunks") if isinstance(cache_payload.get("chunks"), list) else []
+    if not chunks or not chunk_ids:
+        return []
+    chunk_map: dict[str, dict[str, object]] = {}
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_id = str(chunk.get("id") or "").strip()
+        if chunk_id:
+            chunk_map[chunk_id] = chunk
+    selected: list[dict[str, object]] = []
+    for chunk_id in chunk_ids:
+        chunk = chunk_map.get(chunk_id)
+        if chunk:
+            selected.append(chunk)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def select_relevant_copilot_chunks(
+    cache_payload: dict[str, object],
+    annotation: dict[str, object],
+    user_message: str,
+    *,
+    limit: int = 4,
+) -> list[dict[str, object]]:
+    chunks = cache_payload.get("chunks") if isinstance(cache_payload.get("chunks"), list) else []
+    if not chunks:
+        return []
+    quote = str(annotation.get("quote") or "").strip()
+    context_before = str(annotation.get("contextBefore") or "").strip()
+    context_after = str(annotation.get("contextAfter") or "").strip()
+    query_tokens = tokenize_copilot_query("\n".join(part for part in (quote, context_before, context_after, user_message) if part))
+    scored: list[tuple[float, dict[str, object]]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        text = str(chunk.get("text") or "").strip()
+        normalized = str(chunk.get("normalized") or "").strip()
+        if not text or not normalized:
+            continue
+        score = 0.0
+        if quote and quote in text:
+            score += 10
+        if context_before and context_before[:24] and context_before[:24] in text:
+            score += 4
+        if context_after and context_after[:24] and context_after[:24] in text:
+            score += 4
+        for token in query_tokens:
+            if token in normalized:
+                score += min(3.0, 0.8 + (len(token) / 12))
+        if score <= 0:
+            continue
+        scored.append((score, chunk))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = [chunk for _score, chunk in scored[:limit]]
+    if selected:
+        return selected
+    fallback = chunks[: min(limit, len(chunks))]
+    return [item for item in fallback if isinstance(item, dict)]
+
+
+def merge_copilot_chunks(
+    primary_chunks: list[dict[str, object]],
+    secondary_chunks: list[dict[str, object]],
+    *,
+    limit: int = 4,
+) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for chunk in [*primary_chunks, *secondary_chunks]:
+        if not isinstance(chunk, dict):
+            continue
+        chunk_id = str(chunk.get("id") or "").strip()
+        if not chunk_id or chunk_id in seen_ids:
+            continue
+        seen_ids.add(chunk_id)
+        merged.append(chunk)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def resolve_agent_relevant_chunks(
+    cache_payload: dict[str, object],
+    annotation: dict[str, object],
+    user_message: str,
+    follow_up_comment: dict[str, object] | None = None,
+    *,
+    limit: int = 4,
+) -> list[dict[str, object]]:
+    fresh_chunks = select_relevant_copilot_chunks(cache_payload, annotation, user_message, limit=limit)
+    if not isinstance(follow_up_comment, dict):
+        return fresh_chunks
+    reused_chunk_ids = normalize_string_list(follow_up_comment.get("contextChunkIds"), limit=limit)
+    reused_chunks = select_copilot_chunks_by_ids(cache_payload, reused_chunk_ids, limit=limit)
+    if not reused_chunks:
+        return fresh_chunks
+    # Follow-up keeps the previous focus first, but always leaves room for incremental retrieval.
+    reused_budget = min(len(reused_chunks), max(limit - 1, 1))
+    return merge_copilot_chunks(reused_chunks[:reused_budget], fresh_chunks, limit=limit)
+
+
+def build_agent_messages(
+    record: PaperRecord,
+    annotation: dict[str, object],
+    agent: dict[str, object],
+    user_message: str = "",
+    follow_up_comment: dict[str, object] | None = None,
+    context_cache: dict[str, object] | None = None,
+    relevant_chunks: list[dict[str, object]] | None = None,
+) -> list[dict[str, str]]:
+    view = str(annotation.get("view") or "linearized")
+    active_context_cache = context_cache or load_copilot_context_cache(record, view)
+    context_before = str(annotation.get("contextBefore") or "").strip()
+    context_after = str(annotation.get("contextAfter") or "").strip()
+    follow_up_content = str(follow_up_comment.get("content") or "").strip() if isinstance(follow_up_comment, dict) else ""
+    conversation_context = build_annotation_conversation_context(annotation, str(agent.get("id") or "").strip())
+    active_relevant_chunks = relevant_chunks or resolve_agent_relevant_chunks(active_context_cache, annotation, user_message, follow_up_comment)
+    shared_context = "\n\n".join(
+        part
+        for part in (
+            f"论文标题：{record.title}",
+            f"当前阅读视图：{'译文版本' if view == 'bilingual' else '原文'}",
+            "以下是论文的本地结构摘要，请先建立整体理解：\n\n" + str(active_context_cache.get("overview") or "").strip(),
+            "以下是当前线程优先复用并补充后的相关正文片段：\n\n" + render_relevant_chunks(active_relevant_chunks) if active_relevant_chunks else "",
+        )
+        if part
+    )
+    focus_prompt = "\n".join(
+        part
+        for part in (
+            f"你的身份设定：{str(agent.get('rolePrompt') or '').strip()}",
+            f"当前用户划线句子：{str(annotation.get('quote') or '').strip()}",
+            f"划线前文：{context_before}" if context_before else "",
+            f"划线后文：{context_after}" if context_after else "",
+            f"当前线程最近几轮对话：\n{conversation_context}" if conversation_context else "",
+            f"你上一轮的回复：{follow_up_content}" if follow_up_content else "",
+            f"用户这次的问题：{user_message.strip()}" if user_message.strip() else "",
+            "请把焦点放在用户实际选中的这句话，不要偷换成整段概括。",
+            "如果用户是在追问你上一轮的回复，先承接你上一次的判断，再直接回答这次问题。",
+            "先判断这句话在全文中的作用，再围绕用户的问题，从你的角色出发给出具体看法。",
+            "不要复述整篇论文，不要空泛鼓励，优先给出判断、疑点、启发或可落地的提醒。",
+        )
+        if part
+    )
+    return [
+        {
+            "role": "system",
+            "content": "你是论文共读智能体。输出中文，保持克制、具体、少废话。",
+        },
+        {
+            "role": "user",
+            "content": shared_context,
+        },
+        {
+            "role": "user",
+            "content": focus_prompt,
+        },
+    ]
+
+
+def request_copilot_completion(agent: dict[str, object], messages: list[dict[str, str]]) -> str:
+    response = requests.post(
+        f"{str(agent.get('baseUrl') or '').rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {str(agent.get('apiKey') or '').strip()}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": str(agent.get("model") or "").strip(),
+            "messages": messages,
+            "temperature": 0.5,
+            "max_tokens": 900,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    result = response.json()
+    content = (
+        result.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
+    text = str(content).strip()
+    if not text:
+        raise RuntimeError("智能体没有返回内容")
+    return text
+
+
+def resolve_annotation_comment(annotation: dict[str, object], comment_id: str) -> dict[str, object]:
+    comments = annotation.get("comments")
+    if not isinstance(comments, list):
+        raise FileNotFoundError("未找到指定评论")
+    for comment in comments:
+        if isinstance(comment, dict) and str(comment.get("id") or "") == comment_id:
+            return comment
+    raise FileNotFoundError("未找到指定评论")
+
+
+def build_annotation_conversation_context(annotation: dict[str, object], agent_id: str, *, max_turns: int = 6) -> str:
+    comments = annotation.get("comments")
+    if not isinstance(comments, list):
+        return ""
+
+    relevant_lines: list[str] = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        author_type = str(comment.get("authorType") or "").strip()
+        content = str(comment.get("content") or "").strip()
+        if not content:
+            continue
+        if author_type == "agent":
+            comment_agent_id = str(comment.get("agentId") or "").strip()
+            comment_author = str(comment.get("authorLabel") or "共读助手").strip() or "共读助手"
+            if comment_agent_id and agent_id and comment_agent_id != agent_id:
+                continue
+            relevant_lines.append(f"{comment_author}：{content}")
+            continue
+
+        if author_type == "user":
+            reply_to_agent_id = str(comment.get("replyToAgentId") or "").strip()
+            if reply_to_agent_id and agent_id and reply_to_agent_id != agent_id:
+                continue
+            relevant_lines.append(f"用户：{content}")
+
+    if not relevant_lines:
+        return ""
+    return "\n".join(relevant_lines[-max_turns:])
+
+
+def resolve_latest_user_comment_for_agent(annotation: dict[str, object], agent_id: str) -> dict[str, object] | None:
+    comments = annotation.get("comments")
+    if not isinstance(comments, list):
+        return None
+    for comment in reversed(comments):
+        if not isinstance(comment, dict):
+            continue
+        if str(comment.get("authorType") or "").strip() != "user":
+            continue
+        reply_to_agent_id = str(comment.get("replyToAgentId") or "").strip()
+        if reply_to_agent_id and agent_id and reply_to_agent_id != agent_id:
+            continue
+        content = str(comment.get("content") or "").strip()
+        if content:
+            return comment
+    return None
+
+
+def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object]):
+    agent_id = payload.get("agentId")
+    if not isinstance(agent_id, str) or not agent_id.strip():
+        raise ValueError("缺少智能体标识")
+    settings = load_gui_settings()
+    agent = resolve_copilot_agent(settings, agent_id.strip())
+
+    annotation_id = payload.get("annotationId")
+    if isinstance(annotation_id, str) and annotation_id.strip():
+        _file_path, annotation = load_annotation(record, annotation_id.strip())
+    else:
+        draft = payload.get("draft")
+        if not isinstance(draft, dict):
+            raise ValueError("缺少划线上下文")
+        annotation = {
+            "view": draft.get("view"),
+            "quote": draft.get("quote"),
+            "contextBefore": draft.get("contextBefore"),
+            "contextAfter": draft.get("contextAfter"),
+            "anchorTop": draft.get("anchorTop"),
+            "anchorHeight": draft.get("anchorHeight"),
+        }
+
+    user_message = str(payload.get("userMessage") or "").strip()
+    follow_up_comment = None
+    follow_up_comment_id = str(payload.get("followUpCommentId") or "").strip()
+    if follow_up_comment_id:
+        follow_up_comment = resolve_annotation_comment(annotation, follow_up_comment_id)
+        if str(follow_up_comment.get("authorType") or "") != "agent":
+            raise ValueError("追问目标必须是一条智能体评论")
+        target_agent_id = str(follow_up_comment.get("agentId") or "").strip()
+        target_author_label = str(follow_up_comment.get("authorLabel") or "").strip()
+        current_agent_name = str(agent.get("name") or "").strip()
+        if target_agent_id and target_agent_id != agent_id.strip():
+            raise ValueError("追问目标与当前智能体不一致")
+        if not target_agent_id and target_author_label and target_author_label != current_agent_name:
+            raise ValueError("追问目标与当前智能体不一致")
+
+    context_cache = load_copilot_context_cache(record, str(annotation.get("view") or "linearized"))
+    relevant_chunks = resolve_agent_relevant_chunks(context_cache, annotation, user_message, follow_up_comment)
+    content = request_copilot_completion(
+        agent,
+        build_agent_messages(
+            record,
+            annotation,
+            agent,
+            user_message,
+            follow_up_comment,
+            context_cache,
+            relevant_chunks,
+        ),
+    )
+    trigger_user_comment = resolve_latest_user_comment_for_agent(annotation, agent_id.strip())
+    comment_payload = {
+        "authorType": "agent",
+        "agentId": agent_id.strip(),
+        "replyToCommentId": str(trigger_user_comment.get("id") or "").strip() if isinstance(trigger_user_comment, dict) else None,
+        "contextChunkIds": [
+            str(chunk.get("id") or "").strip()
+            for chunk in relevant_chunks
+            if isinstance(chunk, dict) and str(chunk.get("id") or "").strip()
+        ],
+        "authorLabel": str(agent.get("name") or "共读助手").strip() or "共读助手",
+        "content": content,
+        "status": "ready",
+    }
+
+    if isinstance(annotation_id, str) and annotation_id.strip():
+        append_annotation_comment(record, annotation_id.strip(), comment_payload)
+    else:
+        create_annotation(
+            record,
+            {
+                **annotation,
+                "initialComment": comment_payload,
+            },
+        )
 
 
 def load_paper_annotations(record: PaperRecord) -> list[dict[str, object]]:
@@ -1550,6 +2096,12 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stdout.write(f"[cark-gui] {format % args}\n")
         sys.stdout.flush()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
 
     def read_json_body(self) -> dict[str, object]:
         content_length = int(self.headers.get("Content-Length") or 0)
@@ -1745,6 +2297,9 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
             try:
                 if remainder == "/annotations":
                     create_annotation(record, payload)
+                    return self.write_json(load_paper_annotations(record))
+                if remainder == "/annotations/agent-comment":
+                    invoke_annotation_agent(record, payload)
                     return self.write_json(load_paper_annotations(record))
                 if remainder.startswith("/annotations/") and remainder.endswith("/comments"):
                     annotation_id = remainder.removeprefix("/annotations/").removesuffix("/comments").strip("/")

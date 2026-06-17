@@ -1,4 +1,4 @@
-import { Copy, MessageSquarePlus, Search } from 'lucide-react'
+import { BookMarked, Copy, MessageSquarePlus, Search } from 'lucide-react'
 
 interface SelectionToolbarProps {
   x: number
@@ -6,15 +6,16 @@ interface SelectionToolbarProps {
   onCopy: () => void
   onSearch: () => void
   onComment: () => void
+  onNote: () => void
 }
 
-export function SelectionToolbar({ x, y, onCopy, onSearch, onComment }: SelectionToolbarProps) {
+export function SelectionToolbar({ x, y, onCopy, onSearch, onComment, onNote }: SelectionToolbarProps) {
   const actionClassName =
-    'inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-200 transition hover:border-white/25 hover:text-zinc-50'
+    'cark-button-secondary inline-flex items-center gap-2 rounded-full bg-[var(--surface-input)] px-3 py-2 text-xs'
 
   return (
     <div
-      className="fixed z-[60] flex items-center gap-2 rounded-[20px] border border-white/10 bg-[#0f1117]/95 px-2 py-2 shadow-[0_20px_60px_rgba(0,0,0,0.4)] backdrop-blur"
+      className="cark-panel cark-elevated fixed z-[60] flex items-center gap-2 rounded-[20px] px-2 py-2 backdrop-blur"
       style={{ left: `${x}px`, top: `${y}px`, transform: 'translate(-50%, -100%)' }}
       onMouseDown={(event) => event.preventDefault()}
     >
@@ -29,6 +30,10 @@ export function SelectionToolbar({ x, y, onCopy, onSearch, onComment }: Selectio
       <button type="button" onClick={onComment} className={actionClassName}>
         <MessageSquarePlus className="h-3.5 w-3.5" />
         添加评论
+      </button>
+      <button type="button" onClick={onNote} className={actionClassName}>
+        <BookMarked className="h-3.5 w-3.5" />
+        记笔记
       </button>
     </div>
   )

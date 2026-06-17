@@ -11,6 +11,7 @@ import {
 import { PaperListItem } from '@/components/PaperListItem'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TaskCenter } from '@/components/TaskCenter'
+import { ThemeSwitch } from '@/components/ThemeSwitch'
 import { UploadPanel } from '@/components/UploadPanel'
 import { ZoteroImportDialog } from '@/components/ZoteroImportDialog'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
@@ -41,9 +42,17 @@ function createFallbackSettings(): AppSettings {
       appSecret: '',
     },
     copilot: {
-      apiKey: '',
-      baseUrl: '',
-      model: '',
+      agents: [
+        {
+          id: 'agent-default',
+          enabled: true,
+          name: '共读助手',
+          rolePrompt: '你是用户的论文共读伙伴。先准确理解论文，再围绕用户划线句子的上下文给出具体、克制、有判断的评论。',
+          apiKey: '',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          model: '',
+        },
+      ],
     },
   }
 }
@@ -149,20 +158,53 @@ export default function Home() {
       .slice(0, 4)
   }, [papers, recentPaperIds])
 
-  async function handleUpload(file: File) {
+  async function handleUpload(files: File[]) {
     if (uploadBlocked) {
       setUploadError(uploadBlockedReason || '当前环境还不能上传')
       return
     }
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
+    const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'))
+    if (pdfFiles.length === 0) {
       setUploadError('请选择 PDF 文件')
       return
     }
+    if (pdfFiles.length !== files.length) {
+      setUploadError('已忽略非 PDF 文件，只上传 PDF')
+    }
     setUploading(true)
-    setUploadError(null)
+    if (pdfFiles.length === files.length) {
+      setUploadError(null)
+    }
     try {
-      const task = await postUploadPdf(file)
-      setTasks((current) => [task, ...current.filter((item) => item.id !== task.id)])
+      const nextTasks: ProcessingTask[] = []
+      const failedFiles: string[] = []
+
+      for (const file of pdfFiles) {
+        try {
+          nextTasks.push(await postUploadPdf(file))
+        } catch {
+          failedFiles.push(file.name)
+        }
+      }
+
+      if (nextTasks.length > 0) {
+        setTasks((current) => [
+          ...nextTasks,
+          ...current.filter((item) => !nextTasks.some((task) => task.id === item.id)),
+        ])
+      }
+
+      if (failedFiles.length > 0) {
+        setUploadError(
+          failedFiles.length === 1
+            ? `${failedFiles[0]} 上传失败`
+            : `${failedFiles.length} 个文件上传失败：${failedFiles.slice(0, 3).join('、')}${failedFiles.length > 3 ? '...' : ''}`,
+        )
+      } else if (pdfFiles.length !== files.length) {
+        setUploadError('已忽略非 PDF 文件，只上传 PDF')
+      } else {
+        setUploadError(null)
+      }
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : '上传失败')
     } finally {
@@ -205,21 +247,24 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0b0b0d] text-zinc-100">
+    <main className="cark-page min-h-screen">
       <div className="mx-auto min-h-screen max-w-[1600px] px-6 py-6 lg:px-8">
         <header className="flex items-center justify-between gap-5">
           <div>
-            <p className="text-xs uppercase tracking-[0.28em] text-amber-200">cark</p>
-            <h1 className="mt-1 font-serif text-3xl text-zinc-50">论文库</h1>
+            <p className="cark-faint text-xs uppercase tracking-[0.28em]">cark</p>
+            <h1 className="cark-title mt-1 font-serif text-3xl">论文库</h1>
           </div>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-sm text-zinc-300 transition hover:border-white/25 hover:text-zinc-50"
-          >
-            <Settings2 className="h-4 w-4" />
-            设置
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <ThemeSwitch />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
+            >
+              <Settings2 className="h-4 w-4" />
+              设置
+            </button>
+          </div>
         </header>
 
         {capabilities && !capabilities.ready ? (
@@ -248,7 +293,7 @@ export default function Home() {
             disabled={uploadBlocked}
             disabledReason={uploadBlocked ? uploadBlockedReason : null}
             error={uploadError}
-            onUpload={(file) => void handleUpload(file)}
+            onUpload={(files) => void handleUpload(files)}
             onOpenZotero={() => setZoteroOpen(true)}
           />
         </div>
@@ -259,28 +304,28 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
-          <div className="rounded-[30px] border border-white/10 bg-white/[0.03] p-5 lg:p-6">
+        <section className="mt-6 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
+          <div className="cark-panel min-w-0 rounded-[30px] p-5 lg:p-6">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
               <div>
-                <h2 className="font-serif text-2xl text-zinc-100">所有论文</h2>
-                <p className="mt-1 text-sm text-zinc-500">继续阅读，或找到已经处理过的论文。</p>
+                <h2 className="cark-title font-serif text-2xl">所有论文</h2>
+                <p className="cark-faint mt-1 text-sm">继续阅读，或找到已经处理过的论文。</p>
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative min-w-[260px]">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                  <Search className="cark-faint pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2" />
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="搜索论文"
-                    className="w-full rounded-full border border-white/10 bg-black/20 py-2.5 pl-11 pr-4 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-amber-300/40"
+                    className="cark-input w-full rounded-full py-2.5 pl-11 pr-4 text-sm outline-none transition"
                   />
                 </div>
                 <button
                   type="button"
                   title="刷新论文库"
                   onClick={() => void refreshPapers()}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-zinc-400 transition hover:border-white/25 hover:text-zinc-100"
+                  className="cark-button-secondary inline-flex h-10 w-10 items-center justify-center rounded-full"
                 >
                   <RefreshCw className={`h-4 w-4 ${papersLoading ? 'animate-spin' : ''}`} />
                 </button>
@@ -290,8 +335,8 @@ export default function Home() {
             {!query && recentPapers.length > 0 ? (
               <section className="mt-6">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-zinc-300">最近阅读</h3>
-                  <span className="text-xs text-zinc-600">{recentPapers.length}</span>
+                  <h3 className="cark-text text-sm font-medium">最近阅读</h3>
+                  <span className="cark-faint text-xs">{recentPapers.length}</span>
                 </div>
                 <div className="grid gap-3 lg:grid-cols-2">
                   {recentPapers.map((paper) => <PaperListItem key={paper.id} paper={paper} recent />)}
@@ -301,8 +346,8 @@ export default function Home() {
 
             <section className="mt-6">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-medium text-zinc-300">{query ? '搜索结果' : '全部论文'}</h3>
-                <span className="text-xs text-zinc-600">{filteredPapers.length}</span>
+                <h3 className="cark-text text-sm font-medium">{query ? '搜索结果' : '全部论文'}</h3>
+                <span className="cark-faint text-xs">{filteredPapers.length}</span>
               </div>
               {papersError ? (
                 <div className="mb-3 rounded-[20px] border border-rose-400/20 bg-rose-400/10 p-4 text-sm text-rose-100">
@@ -312,7 +357,7 @@ export default function Home() {
               <div className="grid gap-3">
                 {filteredPapers.map((paper) => <PaperListItem key={paper.id} paper={paper} />)}
                 {!papersLoading && filteredPapers.length === 0 ? (
-                  <div className="rounded-[22px] border border-dashed border-white/10 px-5 py-8 text-center text-sm text-zinc-500">
+                  <div className="cark-faint rounded-[22px] border border-dashed [border-color:var(--border-strong)] px-5 py-8 text-center text-sm">
                     {query ? '没有匹配的论文。' : '还没有论文。上传第一篇 PDF。'}
                   </div>
                 ) : null}

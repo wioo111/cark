@@ -168,7 +168,7 @@ class GuiServerStartupTests(unittest.TestCase):
         self.assertEqual(env["TRANSLATE_FAIL_RATIO_LIMIT"], "0.0")
 
     def test_placeholder_agent_comments_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, "只允许保存用户评论"):
+        with self.assertRaisesRegex(ValueError, "不允许保存占位评论"):
             normalize_annotation_comment(
                 {
                     "authorType": "agent",

@@ -76,6 +76,9 @@ export interface AnnotationComment {
   id: string
   authorType: AnnotationAuthorType
   authorLabel: string
+  agentId?: string | null
+  replyToCommentId?: string | null
+  replyToAgentId?: string | null
   content: string
   preview: string
   createdAt: string
@@ -117,6 +120,9 @@ export interface CreatePaperAnnotationInput {
 export interface CreateAnnotationCommentInput {
   authorType: AnnotationAuthorType
   authorLabel: string
+  agentId?: string
+  replyToCommentId?: string
+  replyToAgentId?: string
   content: string
   status?: AnnotationCommentStatus
 }
@@ -127,6 +133,21 @@ export interface UpdateAnnotationCommentInput {
 
 export interface UpdatePaperAnnotationInput {
   archived?: boolean
+}
+
+export interface InvokeAnnotationAgentInput {
+  agentId: string
+  annotationId?: string
+  userMessage?: string
+  followUpCommentId?: string
+  draft?: {
+    view: PaperView
+    quote: string
+    contextBefore?: string | null
+    contextAfter?: string | null
+    anchorTop: number
+    anchorHeight: number
+  }
 }
 
 export interface PaperDetail extends PaperSummary {
@@ -150,7 +171,18 @@ export interface PaperDetail extends PaperSummary {
 export interface OutlineItem {
   id: string
   text: string
+  translatedText?: string
   level: number
+}
+
+export interface CopilotAgentConfig {
+  id: string
+  enabled: boolean
+  name: string
+  rolePrompt: string
+  apiKey: string
+  baseUrl: string
+  model: string
 }
 
 export interface AppSettings {
@@ -176,9 +208,7 @@ export interface AppSettings {
     appSecret: string
   }
   copilot: {
-    apiKey: string
-    baseUrl: string
-    model: string
+    agents: CopilotAgentConfig[]
   }
 }
 
@@ -223,6 +253,7 @@ export interface ReadingState {
     anchorTop: number
     anchorHeight: number
     content: string
+    mentionAgentIds?: string[]
   } | null
   updatedAt?: string | null
 }

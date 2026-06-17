@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, FolderOpen, PanelLeft, RefreshCw, X } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, ArrowLeft, BookMarked, FolderOpen, PanelLeft, RefreshCw, X } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import {
@@ -7,20 +7,30 @@ import {
   fetchPaperAnnotations,
   fetchPaperDetail,
   fetchReadingState,
+  fetchSettings,
   patchAnnotationComment,
   patchPaperAnnotation,
+  postAnnotationAgentComment,
   postAnnotationComment,
   postOpenAction,
   postPaperAnnotation,
   saveReadingState,
 } from '@/api'
-import { type AnnotationComposerDraft, type AnnotationEditDraft, type AnnotationReplyDraft, CommentLane } from '@/components/CommentLane'
+import {
+  type AnnotationComposerDraft,
+  type AnnotationEditDraft,
+  type AnnotationReplyDraft,
+  type AnnotationReplyTarget,
+  CommentLane,
+} from '@/components/CommentLane'
 import { MarkdownArticle } from '@/components/MarkdownArticle'
 import { OutlineNav } from '@/components/OutlineNav'
+import type { MemoryNoteSeed } from '@/components/PaperMemoryPanel'
 import { SelectionToolbar } from '@/components/SelectionToolbar'
+import { ThemeSwitch } from '@/components/ThemeSwitch'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
-import type { CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
-import { findBestAnnotationMatch, normalizeAnnotationText, resolveAnnotationAnchor } from '@/utils/annotationLocator'
+import type { AppSettings, CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
+import { normalizeAnnotationText, resolveAnnotationHighlight } from '@/utils/annotationLocator'
 import { scrollToArticleSection } from '@/utils/markdown'
 import {
   cleanBilingualMarkdown,
@@ -32,9 +42,43 @@ import {
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
 
 const viewOptions: Array<{ key: PaperView; label: string }> = [
-  { key: 'linearized', label: '结构化原文' },
-  { key: 'bilingual', label: '中英双语' },
+  { key: 'linearized', label: '原文' },
+  { key: 'bilingual', label: '译文版本' },
 ]
+
+const PaperMemoryPanel = lazy(async () => {
+  const module = await import('@/components/PaperMemoryPanel')
+  return { default: module.PaperMemoryPanel }
+})
+
+function createFallbackSettings(): AppSettings {
+  return {
+    mineru: {
+      backend: 'local',
+      modelVersion: 'pipeline',
+      parseMethod: 'auto',
+      apiToken: '',
+      reuseExistingParse: true,
+    },
+    translation: {
+      enabled: false,
+      apiKey: '',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+      failRatioLimit: 0.2,
+    },
+    publish: {
+      prepareOnly: true,
+      imageMode: 'note',
+      folderToken: '',
+      appId: '',
+      appSecret: '',
+    },
+    copilot: {
+      agents: [],
+    },
+  }
+}
 
 export default function ReaderPage() {
   const { paperId = '' } = useParams()
@@ -46,6 +90,7 @@ export default function ReaderPage() {
   const [error, setError] = useState<string | null>(null)
   const [annotationError, setAnnotationError] = useState<string | null>(null)
   const [readingStateError, setReadingStateError] = useState<string | null>(null)
+  const [settings, setSettings] = useState<AppSettings>(createFallbackSettings)
   const [restoredView, setRestoredView] = useState<PaperView | null>(null)
   const [readingStateLoaded, setReadingStateLoaded] = useState(false)
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
@@ -59,7 +104,13 @@ export default function ReaderPage() {
   const [editDraft, setEditDraft] = useState<AnnotationEditDraft | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
   const [positionedAnnotations, setPositionedAnnotations] = useState<PaperAnnotation[]>([])
+  const [annotationHighlights, setAnnotationHighlights] = useState<
+    Array<{ annotationId: string; rects: Array<{ top: number; left: number; width: number; height: number }> }>
+  >([])
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
+  const [flashAnnotationId, setFlashAnnotationId] = useState<string | null>(null)
+  const [memoryOpen, setMemoryOpen] = useState(false)
+  const [memorySeed, setMemorySeed] = useState<MemoryNoteSeed | null>(null)
   const articleShellRef = useRef<HTMLDivElement | null>(null)
   const articleRef = useRef<HTMLDivElement | null>(null)
   const restoredScrollRef = useRef(0)
@@ -98,9 +149,10 @@ export default function ReaderPage() {
 
         setDetail(detailPayload)
 
-        const [annotationResult, readingStateResult] = await Promise.allSettled([
+        const [annotationResult, readingStateResult, settingsResult] = await Promise.allSettled([
           fetchPaperAnnotations(paperId),
           fetchReadingState(paperId),
+          fetchSettings(),
         ])
         if (cancelled) {
           return
@@ -129,13 +181,16 @@ export default function ReaderPage() {
             readingRevisionRef.current,
             readingState.clientRevision ?? 0,
           )
-          setDraft(readingState.draft ?? null)
+          setDraft(normalizeDraftComposerState(readingState.draft ?? null))
         } else {
           setReadingStateError(
             readingStateResult.reason instanceof Error
               ? `阅读进度加载失败：${readingStateResult.reason.message}`
               : '阅读进度加载失败',
           )
+        }
+        if (settingsResult.status === 'fulfilled') {
+          setSettings(settingsResult.value)
         }
         setReadingStateLoaded(true)
         setLoading(false)
@@ -160,6 +215,19 @@ export default function ReaderPage() {
   const activeView = useMemo(
     () => resolvePaperView(detail?.availableViews ?? ['linearized'], requestedView, restoredView),
     [detail?.availableViews, requestedView, restoredView],
+  )
+  const availableAgents = useMemo(
+    () =>
+      settings.copilot.agents.filter(
+        (agent) =>
+          agent.enabled &&
+          agent.name.trim() &&
+          agent.rolePrompt.trim() &&
+          agent.apiKey.trim() &&
+          agent.baseUrl.trim() &&
+          agent.model.trim(),
+      ),
+    [settings.copilot.agents],
   )
 
   const markdown = useMemo(() => {
@@ -340,22 +408,28 @@ export default function ReaderPage() {
     const articleShell = articleShellRef.current
     if (!articleContainer || !articleShell) {
       setPositionedAnnotations(annotations)
+      setAnnotationHighlights([])
       return
     }
 
     let animationFrame = 0
     const recompute = () => {
-      setPositionedAnnotations(
-        annotations.map((annotation) => {
+      const nextHighlights: Array<{ annotationId: string; rects: Array<{ top: number; left: number; width: number; height: number }> }> = []
+      const nextAnnotations = annotations.map((annotation) => {
           if (annotation.view !== activeView) {
             return annotation
           }
-          const resolved = resolveAnnotationAnchor(articleContainer, articleShell, annotation)
-          return resolved
-            ? { ...annotation, anchorTop: resolved.top, anchorHeight: resolved.height }
-            : annotation
-        }),
-      )
+          const resolved = resolveAnnotationHighlight(articleContainer, articleShell, annotation)
+          if (!resolved) {
+            return annotation
+          }
+          if (!annotation.archived) {
+            nextHighlights.push({ annotationId: annotation.id, rects: resolved.rects })
+          }
+          return { ...annotation, anchorTop: resolved.top, anchorHeight: resolved.height }
+        })
+      setPositionedAnnotations(nextAnnotations)
+      setAnnotationHighlights(nextHighlights)
     }
 
     const scheduleRecompute = () => {
@@ -379,35 +453,9 @@ export default function ReaderPage() {
   }, [activeView, annotations, markdown])
 
   useEffect(() => {
-    const articleContainer = articleRef.current
-    if (!articleContainer) {
-      return
-    }
-
-    clearInlineAnnotationMarkers(articleContainer)
-    const visible = positionedAnnotations.filter((annotation) => annotation.view === activeView && !annotation.archived)
-    const nodeCount = new Map<HTMLElement, number>()
-    for (const annotation of visible) {
-      const match = findBestAnnotationMatch(articleContainer, annotation)
-      if (match) {
-        nodeCount.set(match.element, (nodeCount.get(match.element) ?? 0) + 1)
-      }
-    }
-
-    for (const [element, count] of nodeCount.entries()) {
-      element.classList.add('annotation-inline-marked')
-      element.setAttribute('data-annotation-count', String(count))
-      element.setAttribute('data-annotation-marked', 'true')
-    }
-
-    return () => {
-      clearInlineAnnotationMarkers(articleContainer)
-    }
-  }, [activeView, positionedAnnotations])
-
-  useEffect(() => {
-    const articleContainer = articleRef.current
-    if (!articleContainer || !focusedAnnotationId) {
+    const articleShell = articleShellRef.current
+    const targetHighlight = annotationHighlights.find((annotation) => annotation.annotationId === focusedAnnotationId)
+    if (!articleShell || !focusedAnnotationId || !targetHighlight) {
       return
     }
 
@@ -416,25 +464,20 @@ export default function ReaderPage() {
       return
     }
 
-    const match = findBestAnnotationMatch(articleContainer, targetAnnotation)
-    if (!match) {
-      return
-    }
-
-    clearFocusedAnnotation(articleContainer)
-    const target = match.element
-    target.classList.add('annotation-focus-active')
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const shellRect = articleShell.getBoundingClientRect()
+    const absoluteTop = window.scrollY + shellRect.top + Math.max(targetAnnotation.anchorTop - 140, 0)
+    window.scrollTo({ top: absoluteTop, behavior: 'auto' })
+    setFlashAnnotationId(focusedAnnotationId)
 
     const timeout = window.setTimeout(() => {
-      target.classList.remove('annotation-focus-active')
+      setFlashAnnotationId((current) => (current === focusedAnnotationId ? null : current))
     }, 2200)
 
     return () => {
       window.clearTimeout(timeout)
-      target.classList.remove('annotation-focus-active')
+      setFlashAnnotationId((current) => (current === focusedAnnotationId ? null : current))
     }
-  }, [activeView, focusedAnnotationId, positionedAnnotations])
+  }, [activeView, annotationHighlights, focusedAnnotationId, positionedAnnotations])
 
   useEffect(() => {
     const handleWindowChange = () => {
@@ -514,7 +557,22 @@ export default function ReaderPage() {
       anchorTop: toolbarSelection.anchorTop,
       anchorHeight: toolbarSelection.anchorHeight,
       content: '',
+      mentionAgentIds: [],
     })
+    clearBrowserSelection()
+    setToolbarSelection(null)
+  }
+
+  function handleNoteStart() {
+    if (!toolbarSelection) {
+      return
+    }
+    setMemorySeed({
+      quote: toolbarSelection.quote,
+      contextBefore: toolbarSelection.contextBefore,
+      contextAfter: toolbarSelection.contextAfter,
+    })
+    setMemoryOpen(true)
     clearBrowserSelection()
     setToolbarSelection(null)
   }
@@ -533,8 +591,13 @@ export default function ReaderPage() {
           content: draft.content.trim(),
           status: 'ready',
         })
-      setAnnotations(nextAnnotations)
-      setFocusedAnnotationId(findExistingAnnotationId(nextAnnotations, draft))
+      const annotationId = findExistingAnnotationId(nextAnnotations, draft)
+      let finalAnnotations = nextAnnotations
+      if (annotationId) {
+        finalAnnotations = await invokeMentionedAgents(detail.id, annotationId, draft.mentionAgentIds, draft.content.trim(), nextAnnotations)
+      }
+      setAnnotations(finalAnnotations)
+      setFocusedAnnotationId(annotationId)
       setDraft(null)
       clearBrowserSelection()
     } catch (saveError) {
@@ -544,10 +607,18 @@ export default function ReaderPage() {
     }
   }
 
-  function handleReplyStart(annotationId: string) {
+  function handleReplyStart(annotationId: string, target?: AnnotationReplyTarget) {
     setAnnotationError(null)
     setEditDraft(null)
-    setReplyDraft({ annotationId, content: '' })
+    setReplyDraft({
+      annotationId,
+      content: '',
+      mentionAgentIds: target?.agentId ? [target.agentId] : [],
+      followUpCommentId: target?.commentId ?? null,
+      followUpAgentId: target?.agentId ?? null,
+      followUpAgentLabel: target?.agentLabel ?? null,
+      followUpPreview: target?.commentPreview ?? null,
+    })
   }
 
   async function handleReplySubmit() {
@@ -561,10 +632,21 @@ export default function ReaderPage() {
       const nextAnnotations = await postAnnotationComment(detail.id, replyDraft.annotationId, {
           authorType: 'user',
           authorLabel: '我的评论',
+          replyToCommentId: replyDraft.followUpCommentId ?? undefined,
+          replyToAgentId: replyDraft.followUpAgentId ?? undefined,
           content: replyDraft.content.trim(),
           status: 'ready',
         })
-      setAnnotations(nextAnnotations)
+      const finalAnnotations = await invokeMentionedAgents(
+        detail.id,
+        replyDraft.annotationId,
+        replyDraft.mentionAgentIds,
+        replyDraft.content.trim(),
+        nextAnnotations,
+        replyDraft.followUpCommentId ?? undefined,
+        replyDraft.followUpAgentId ?? undefined,
+      )
+      setAnnotations(finalAnnotations)
       setFocusedAnnotationId(replyDraft.annotationId)
       setReplyDraft(null)
     } catch (saveError) {
@@ -572,6 +654,36 @@ export default function ReaderPage() {
     } finally {
       setSavingReply(false)
     }
+  }
+
+  function handleDraftAgentToggle(agentId: string) {
+    setDraft((current) => {
+      if (!current) {
+        return current
+      }
+      const mentioned = current.mentionAgentIds.includes(agentId)
+      return {
+        ...current,
+        mentionAgentIds: mentioned
+          ? current.mentionAgentIds.filter((id) => id !== agentId)
+          : [...current.mentionAgentIds, agentId],
+      }
+    })
+  }
+
+  function handleReplyAgentToggle(agentId: string) {
+    setReplyDraft((current) => {
+      if (!current) {
+        return current
+      }
+      const mentioned = current.mentionAgentIds.includes(agentId)
+      return {
+        ...current,
+        mentionAgentIds: mentioned
+          ? current.mentionAgentIds.filter((id) => id !== agentId)
+          : [...current.mentionAgentIds, agentId],
+      }
+    })
   }
 
   function handleEditStart(annotationId: string, commentId: string, content: string) {
@@ -634,11 +746,32 @@ export default function ReaderPage() {
     }
   }
 
+  async function invokeMentionedAgents(
+    paperIdValue: string,
+    annotationId: string,
+    agentIds: string[],
+    userMessage: string,
+    initialAnnotations: PaperAnnotation[],
+    followUpCommentId?: string,
+    followUpAgentId?: string,
+  ) {
+    let nextAnnotations = initialAnnotations
+    for (const agentId of agentIds) {
+      nextAnnotations = await postAnnotationAgentComment(paperIdValue, {
+        agentId,
+        annotationId,
+        userMessage,
+        followUpCommentId: !followUpCommentId || !followUpAgentId || followUpAgentId === agentId ? followUpCommentId : undefined,
+      })
+    }
+    return nextAnnotations
+  }
+
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#0b0b0d] text-zinc-100">
+      <main className="cark-page min-h-screen">
         <div className="mx-auto flex min-h-screen max-w-[1600px] items-center justify-center">
-          <div className="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.03] px-5 py-3 text-sm text-zinc-300">
+          <div className="cark-panel cark-text inline-flex items-center gap-3 rounded-full px-5 py-3 text-sm">
             <RefreshCw className="h-4 w-4 animate-spin" />
             正在加载论文
           </div>
@@ -649,10 +782,10 @@ export default function ReaderPage() {
 
   if (!detail || error) {
     return (
-      <main className="min-h-screen bg-[#0b0b0d] px-6 py-6 text-zinc-100">
+      <main className="cark-page min-h-screen px-6 py-6">
         <div className="mx-auto max-w-[800px] rounded-[30px] border border-rose-400/20 bg-rose-400/10 p-8">
           <p className="text-sm text-rose-100">{error || '未找到该论文'}</p>
-          <Link to="/" className="mt-6 inline-flex rounded-full border border-white/10 px-4 py-2 text-sm text-zinc-100">
+          <Link to="/" className="cark-button-secondary mt-6 inline-flex rounded-full px-4 py-2 text-sm">
             返回列表
           </Link>
         </div>
@@ -661,14 +794,22 @@ export default function ReaderPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0b0b0d] text-zinc-100">
+    <main className="cark-page min-h-screen">
+      <Link
+        to="/"
+        className="cark-panel cark-elevated fixed bottom-5 left-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm backdrop-blur transition hover:border-[rgba(var(--accent-rgb),0.28)] xl:left-8"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        返回文献库
+      </Link>
+
       <button
         type="button"
         onClick={() => setOutlineOpen(true)}
-        className="fixed left-4 top-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/45 px-4 py-2 text-sm text-zinc-100 shadow-[0_16px_40px_rgba(0,0,0,0.35)] backdrop-blur transition hover:border-white/25 hover:bg-black/60 lg:left-6 lg:top-6"
+        className="cark-panel cark-elevated fixed left-0 top-1/2 z-40 inline-flex h-14 w-12 -translate-y-1/2 items-center justify-center rounded-r-[18px] border-l-0 backdrop-blur transition hover:w-14 hover:border-[rgba(var(--accent-rgb),0.28)] xl:h-16 xl:w-14"
+        aria-label="打开目录"
       >
         <PanelLeft className="h-4 w-4" />
-        目录
       </button>
 
       {annotationError || readingStateError ? (
@@ -698,18 +839,18 @@ export default function ReaderPage() {
             type="button"
             aria-label="关闭目录"
             onClick={() => setOutlineOpen(false)}
-            className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px]"
+            className="cark-overlay fixed inset-0 z-40 backdrop-blur-[2px]"
           />
-          <aside className="fixed left-4 top-4 bottom-4 z-50 flex w-[min(360px,calc(100vw-2rem))] flex-col rounded-[28px] border border-white/10 bg-[#0f1014]/95 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur xl:left-6 xl:top-6 xl:bottom-6">
+          <aside className="cark-panel cark-elevated fixed bottom-4 left-4 top-4 z-50 flex w-[min(360px,calc(100vw-2rem))] flex-col rounded-[28px] p-4 backdrop-blur xl:bottom-6 xl:left-6 xl:top-6">
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">目录</p>
-                <h2 className="mt-1 font-serif text-xl text-zinc-100">章节导航</h2>
+                <p className="cark-faint text-xs uppercase tracking-[0.22em]">目录</p>
+                <h2 className="cark-title mt-1 font-serif text-xl">章节导航</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setOutlineOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-zinc-300 transition hover:border-white/25 hover:text-zinc-100"
+                className="cark-button-secondary inline-flex h-10 w-10 items-center justify-center rounded-full"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -722,30 +863,35 @@ export default function ReaderPage() {
       ) : null}
 
       <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col px-6 py-6 lg:px-8">
-        <header className="rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.12),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] px-6 py-5">
+        <header className="cark-theme-header rounded-[32px] px-6 py-5">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div className="space-y-3">
-              <Link to="/" className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-zinc-500 transition hover:text-zinc-200">
-                <ArrowLeft className="h-3.5 w-3.5" />
-                返回文献库
-              </Link>
               <div>
-                <h1 className="max-w-5xl text-balance font-serif text-3xl leading-tight text-zinc-50">{detail.title}</h1>
-                <p className="mt-2 text-sm text-zinc-400">
+                <h1 className="cark-title max-w-5xl text-balance font-serif text-3xl leading-tight">{detail.title}</h1>
+                <p className="cark-muted mt-2 text-sm">
                   {detail.taskId ? `任务 ${detail.taskId} · ` : ''}
                   更新于 {formatUpdatedAt(detail.updatedAt)}
                 </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <ThemeSwitch />
               <button
                 type="button"
                 onClick={() => void postOpenAction(detail.id, 'rootDir')}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-sm text-zinc-200 transition hover:border-white/30 hover:text-zinc-50"
+                className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
               >
                 <FolderOpen className="h-4 w-4" />
                 打开目录
+              </button>
+              <button
+                type="button"
+                onClick={() => setMemoryOpen(true)}
+                className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
+              >
+                <BookMarked className="h-4 w-4" />
+                论文记忆
               </button>
             </div>
           </div>
@@ -761,8 +907,8 @@ export default function ReaderPage() {
                   className={[
                     'rounded-full px-4 py-2 text-sm transition',
                     item.key === activeView
-                      ? 'border border-amber-300/40 bg-amber-300/12 text-amber-100'
-                      : 'border border-white/10 bg-black/20 text-zinc-300 hover:border-white/20 hover:text-zinc-50',
+                      ? 'cark-button-accent'
+                      : 'cark-button-secondary bg-[var(--surface-input)]',
                   ].join(' ')}
                 >
                   {item.label}
@@ -772,20 +918,43 @@ export default function ReaderPage() {
         </header>
 
         <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div ref={articleShellRef} className="overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.03]">
-            <div className="border-b border-white/8 px-6 py-4">
-              <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">正文视图</p>
-              <h2 className="mt-1 font-serif text-xl text-zinc-100">
+          <div ref={articleShellRef} className="cark-panel relative overflow-hidden rounded-[28px]">
+            <div className="border-b px-6 py-4 [border-color:var(--border-soft)]">
+              <p className="cark-faint text-xs uppercase tracking-[0.22em]">正文视图</p>
+              <h2 className="cark-title mt-1 font-serif text-xl">
                 {viewOptions.find((item) => item.key === activeView)?.label}
               </h2>
             </div>
+            <div className="pointer-events-none absolute inset-0 z-10">
+              {annotationHighlights
+                .filter((item) => positionedAnnotations.find((annotation) => annotation.id === item.annotationId)?.view === activeView)
+                .flatMap((item) =>
+                  item.rects.map((rect, index) => (
+                    <div
+                      key={`${item.annotationId}-${index}`}
+                      className={[
+                        'absolute rounded-full transition-all',
+                        item.annotationId === flashAnnotationId
+                          ? 'bg-[rgba(var(--accent-rgb),0.85)] shadow-[0_0_18px_rgba(var(--accent-rgb),0.35)]'
+                          : 'bg-[rgba(var(--accent-rgb),0.58)]',
+                      ].join(' ')}
+                      style={{
+                        top: `${rect.top + Math.max(rect.height - (item.annotationId === flashAnnotationId ? 4 : 3), 0)}px`,
+                        left: `${rect.left}px`,
+                        width: `${rect.width}px`,
+                        height: `${item.annotationId === flashAnnotationId ? 3 : 2}px`,
+                      }}
+                    />
+                  )),
+                )}
+            </div>
             <div
               ref={articleRef}
-              className="px-5 py-6 lg:px-8"
+              className="relative px-5 py-6 lg:px-8"
               onMouseUp={handleSelectionCapture}
               onKeyUp={handleSelectionCapture}
             >
-              <div className="rounded-[30px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] px-6 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.28)] lg:px-10 lg:py-10">
+              <div className="cark-paper rounded-[30px] px-6 py-8 lg:px-10 lg:py-10">
                 <MarkdownArticle markdown={markdown} paperId={detail.id} />
               </div>
             </div>
@@ -795,6 +964,7 @@ export default function ReaderPage() {
             annotations={positionedAnnotations}
             activeView={activeView}
             laneHeight={laneHeight}
+            agents={availableAgents}
             draft={draft}
             savingDraft={savingDraft}
             replyDraft={replyDraft}
@@ -804,11 +974,13 @@ export default function ReaderPage() {
             onDraftChange={(value) => setDraft((current) => (current ? { ...current, content: value } : current))}
             onDraftCancel={() => setDraft(null)}
             onDraftSubmit={() => void handleDraftSubmit()}
+            onDraftAgentToggle={handleDraftAgentToggle}
             onSelectAnnotation={(annotationId) => setFocusedAnnotationId(annotationId)}
             onReplyStart={handleReplyStart}
             onReplyChange={(value) => setReplyDraft((current) => (current ? { ...current, content: value } : current))}
             onReplyCancel={() => setReplyDraft(null)}
             onReplySubmit={() => void handleReplySubmit()}
+            onReplyAgentToggle={handleReplyAgentToggle}
             onEditStart={(annotationId, comment) => handleEditStart(annotationId, comment.id, comment.content)}
             onEditChange={(value) => setEditDraft((current) => (current ? { ...current, content: value } : current))}
             onEditCancel={() => setEditDraft(null)}
@@ -826,7 +998,21 @@ export default function ReaderPage() {
           onCopy={() => void handleCopySelection()}
           onSearch={handleSearchSelection}
           onComment={handleDraftStart}
+          onNote={handleNoteStart}
         />
+      ) : null}
+
+      {memoryOpen ? (
+        <Suspense fallback={null}>
+          <PaperMemoryPanel
+            open={memoryOpen}
+            paperId={detail.id}
+            paperTitle={detail.title}
+            seed={memorySeed}
+            onClose={() => setMemoryOpen(false)}
+            onSeedConsumed={() => setMemorySeed(null)}
+          />
+        </Suspense>
       ) : null}
     </main>
   )
@@ -878,12 +1064,18 @@ function readSelection(
   const anchorSource = normalizeWhitespace(anchorElement?.innerText || anchorElement?.textContent || quote)
   const normalizedQuote = normalizeWhitespace(quote)
   const quoteIndex = anchorSource.indexOf(normalizedQuote)
+  const contextWindow = Math.min(Math.max(quote.length < 120 ? 36 : 52, 24), 52)
   return {
     view: activeView,
     quote: quote.slice(0, 600),
-    contextBefore: quoteIndex >= 0 ? anchorSource.slice(Math.max(0, quoteIndex - 72), quoteIndex) : null,
+    contextBefore: quoteIndex >= 0 ? anchorSource.slice(Math.max(0, quoteIndex - contextWindow), quoteIndex) : null,
     contextAfter:
-      quoteIndex >= 0 ? anchorSource.slice(quoteIndex + normalizedQuote.length, quoteIndex + normalizedQuote.length + 72) : null,
+      quoteIndex >= 0
+        ? anchorSource.slice(
+            quoteIndex + normalizedQuote.length,
+            quoteIndex + normalizedQuote.length + contextWindow,
+          )
+        : null,
     anchorTop: Math.max(rangeRect.top - shellRect.top, 0),
     anchorHeight: Math.max(rangeRect.height, 24),
     toolbarX: Math.max(220, Math.min(rangeRect.left + rangeRect.width / 2, window.innerWidth - 220)),
@@ -893,6 +1085,21 @@ function readSelection(
 
 function clearBrowserSelection() {
   window.getSelection()?.removeAllRanges()
+}
+
+function normalizeDraftComposerState(
+  draft:
+    | AnnotationComposerDraft
+    | (Omit<AnnotationComposerDraft, 'mentionAgentIds'> & { mentionAgentIds?: string[] })
+    | null,
+) {
+  if (!draft) {
+    return null
+  }
+  return {
+    ...draft,
+    mentionAgentIds: draft.mentionAgentIds ?? [],
+  }
 }
 
 function normalizeWhitespace(value: string) {
@@ -908,7 +1115,8 @@ function findSelectionAnchorElement(node: Node, articleContainer: HTMLElement) {
     current = current.parentElement
   }
 
-  return articleContainer.querySelector<HTMLElement>('[data-locator-node="true"]')
+  const fallback = node.nodeType === Node.TEXT_NODE ? node.parentElement : node
+  return fallback instanceof HTMLElement && articleContainer.contains(fallback) ? fallback : null
 }
 
 function buildAnnotationPayload(
@@ -937,20 +1145,6 @@ async function upsertAnnotationComment(
     return postAnnotationComment(paperId, existingId, initialComment)
   }
   return postPaperAnnotation(paperId, buildAnnotationPayload(value, initialComment))
-}
-
-function clearFocusedAnnotation(container: HTMLElement) {
-  container.querySelectorAll('.annotation-focus-active').forEach((element) => {
-    element.classList.remove('annotation-focus-active')
-  })
-}
-
-function clearInlineAnnotationMarkers(container: HTMLElement) {
-  container.querySelectorAll<HTMLElement>('[data-annotation-marked="true"]').forEach((element) => {
-    element.classList.remove('annotation-inline-marked')
-    element.removeAttribute('data-annotation-count')
-    element.removeAttribute('data-annotation-marked')
-  })
 }
 
 function findExistingAnnotationId(

@@ -20,7 +20,7 @@ describe('paper utils', () => {
     ])
   })
 
-  it('uses only original headings in bilingual navigation', () => {
+  it('shows original and translated headings in bilingual navigation with one anchor', () => {
     const original = '## ABSTRACT\n\n## 1. INTRODUCTION\n\n## 1. INTRODUCTION\n\n## 1.1. Results'
     const bilingual = [
       '## ABSTRACT',
@@ -36,9 +36,9 @@ describe('paper utils', () => {
     ].join('\n\n')
 
     expect(extractBilingualOutline(original, cleanBilingualMarkdown(bilingual))).toEqual([
-      { id: 'section-1', level: 2, text: 'ABSTRACT' },
-      { id: 'section-3', level: 2, text: '1. INTRODUCTION' },
-      { id: 'section-7', level: 2, text: '1.1. Results' },
+      { id: 'section-1', level: 2, text: 'ABSTRACT', translatedText: '摘要' },
+      { id: 'section-3', level: 2, text: '1. INTRODUCTION', translatedText: '1. 引言' },
+      { id: 'section-7', level: 2, text: '1.1. Results', translatedText: '1.1. 结果' },
     ])
     expect(cleanBilingualMarkdown(bilingual)).not.toContain('Original Heading')
   })

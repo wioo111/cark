@@ -99,5 +99,5 @@ export function activateLocatedNode(target: Element | null) {
 
   target.setAttribute('data-block-active', 'true')
   target.classList.add('block-locator-active')
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.scrollIntoView({ behavior: 'auto', block: 'center' })
 }

@@ -28,13 +28,13 @@ export function TaskCenter({
   onOpenSettings,
 }: TaskCenterProps) {
   return (
-    <aside className="rounded-[30px] border border-white/10 bg-white/[0.03] p-5">
+    <aside className="cark-panel min-w-0 rounded-[30px] p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="font-serif text-xl text-zinc-100">任务</h2>
-          <p className="mt-1 text-xs text-zinc-500">上传后的进度和历史会保留在这里。</p>
+          <h2 className="cark-title font-serif text-xl">任务</h2>
+          <p className="cark-faint mt-1 text-xs">上传后的进度和历史会保留在这里。</p>
         </div>
-        {loading ? <LoaderCircle className="h-4 w-4 animate-spin text-zinc-500" /> : null}
+        {loading ? <LoaderCircle className="cark-faint h-4 w-4 animate-spin" /> : null}
       </div>
 
       <div className="mt-4 space-y-3">
@@ -42,11 +42,11 @@ export function TaskCenter({
           tasks.map((task) => {
             const needsAction = task.status === 'failed' || task.status === 'interrupted'
             return (
-              <article key={task.id} className="rounded-[22px] border border-white/8 bg-black/20 p-4">
+              <article key={task.id} className="cark-card rounded-[22px] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-zinc-100">{task.fileName}</p>
-                    <p className="mt-1 text-xs text-zinc-500">
+                    <p className="cark-title truncate text-sm font-medium">{task.fileName}</p>
+                    <p className="cark-faint mt-1 text-xs">
                       {task.stage} · {task.progress}%
                     </p>
                   </div>
@@ -90,7 +90,7 @@ export function TaskCenter({
                   <button
                     type="button"
                     onClick={() => onOpenPaper(task)}
-                    className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-200 transition hover:border-amber-300/40 hover:text-amber-100"
+                    className="cark-button-secondary mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     打开论文
@@ -99,11 +99,11 @@ export function TaskCenter({
 
                 {task.logs.length > 0 ? (
                   <details className="group mt-3">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-zinc-500 transition hover:text-zinc-300">
+                    <summary className="cark-faint flex cursor-pointer list-none items-center gap-2 text-xs transition hover:text-[var(--text-secondary)]">
                       <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
                       查看日志
                     </summary>
-                    <pre className="mt-2 max-h-40 overflow-auto rounded-[14px] border border-white/8 bg-[#09090b] px-3 py-3 text-xs leading-6 text-zinc-400">
+                    <pre className="cark-card cark-muted mt-2 max-h-40 overflow-auto rounded-[14px] px-3 py-3 text-xs leading-6">
                       {task.logs.slice(-12).join('\n')}
                     </pre>
                   </details>
@@ -112,7 +112,7 @@ export function TaskCenter({
             )
           })
         ) : (
-          <div className="rounded-[20px] border border-dashed border-white/10 px-4 py-5 text-sm text-zinc-500">
+          <div className="cark-faint rounded-[20px] border border-dashed [border-color:var(--border-strong)] px-4 py-5 text-sm">
             上传 PDF 后，任务会出现在这里。
           </div>
         )}
@@ -132,7 +132,7 @@ function TaskStatus({ status }: { status: ProcessingTask['status'] }) {
           ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-200'
           : failed
             ? 'border-rose-300/20 bg-rose-400/10 text-rose-200'
-            : 'border-white/10 bg-white/[0.04] text-zinc-300',
+            : 'cark-card cark-text',
       ].join(' ')}
     >
       {success ? (

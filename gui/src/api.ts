@@ -2,7 +2,9 @@ import type {
   AppSettings,
   AppCapabilities,
   ConnectionTestResult,
+  CopilotAgentConfig,
   CreateAnnotationCommentInput,
+  InvokeAnnotationAgentInput,
   CreatePaperAnnotationInput,
   CreatePaperNoteInput,
   PaperAnnotation,
@@ -16,6 +18,76 @@ import type {
   ZoteroPaper,
   ZoteroStatus,
 } from '@/types'
+
+function createDefaultCopilotAgent(overrides?: Partial<CopilotAgentConfig>): CopilotAgentConfig {
+  return {
+    id: 'agent-default',
+    enabled: true,
+    name: '共读助手',
+    rolePrompt: '你是用户的论文共读伙伴。先完整理解论文，再围绕用户划线句子的上下文给出具体、克制、有判断的评论。',
+    apiKey: '',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: '',
+    ...overrides,
+  }
+}
+
+function normalizeSettingsPayload(payload: unknown): AppSettings {
+  const raw = payload && typeof payload === 'object' ? payload as Partial<AppSettings> & { copilot?: Record<string, unknown> } : {}
+  const rawCopilot: Record<string, unknown> = raw.copilot && typeof raw.copilot === 'object' ? raw.copilot : {}
+  const rawAgents = Array.isArray(rawCopilot.agents) ? rawCopilot.agents : null
+
+  const agents = rawAgents
+    ? rawAgents
+        .filter((item): item is Partial<CopilotAgentConfig> => Boolean(item && typeof item === 'object'))
+        .map((agent, index) =>
+          createDefaultCopilotAgent({
+            id: String(agent.id || `agent-${index + 1}`),
+            enabled: Boolean(agent.enabled ?? true),
+            name: String(agent.name || `共读助手 ${index + 1}`),
+            rolePrompt: String(agent.rolePrompt || createDefaultCopilotAgent().rolePrompt),
+            apiKey: String(agent.apiKey || ''),
+            baseUrl: String(agent.baseUrl || 'https://openrouter.ai/api/v1'),
+            model: String(agent.model || ''),
+          }),
+        )
+    : [
+        createDefaultCopilotAgent({
+          apiKey: String(rawCopilot.apiKey || ''),
+          baseUrl: String(rawCopilot.baseUrl || 'https://openrouter.ai/api/v1'),
+          model: String(rawCopilot.model || ''),
+        }),
+      ]
+
+  return {
+    mineru: {
+      backend: raw.mineru?.backend === 'cloud' ? 'cloud' : 'local',
+      modelVersion: raw.mineru?.modelVersion === 'vlm' ? 'vlm' : 'pipeline',
+      parseMethod:
+        raw.mineru?.parseMethod === 'txt' || raw.mineru?.parseMethod === 'ocr' ? raw.mineru.parseMethod : 'auto',
+      apiToken: String(raw.mineru?.apiToken || ''),
+      reuseExistingParse: Boolean(raw.mineru?.reuseExistingParse ?? true),
+    },
+    translation: {
+      enabled: Boolean(raw.translation?.enabled),
+      apiKey: String(raw.translation?.apiKey || ''),
+      baseUrl: String(raw.translation?.baseUrl || 'https://api.deepseek.com/v1'),
+      model: String(raw.translation?.model || 'deepseek-chat'),
+      failRatioLimit: Number(raw.translation?.failRatioLimit ?? 0.2),
+    },
+    publish: {
+      prepareOnly: Boolean(raw.publish?.prepareOnly ?? true),
+      imageMode:
+        raw.publish?.imageMode === 'strip' || raw.publish?.imageMode === 'keep' ? raw.publish.imageMode : 'note',
+      folderToken: String(raw.publish?.folderToken || ''),
+      appId: String(raw.publish?.appId || ''),
+      appSecret: String(raw.publish?.appSecret || ''),
+    },
+    copilot: {
+      agents: agents.length > 0 ? agents : [createDefaultCopilotAgent()],
+    },
+  }
+}
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
@@ -176,7 +248,7 @@ export function postOpenRuntime() {
 }
 
 export function fetchSettings() {
-  return requestJson<AppSettings>('/api/settings')
+  return requestJson<unknown>('/api/settings').then((payload) => normalizeSettingsPayload(payload))
 }
 
 export function fetchCapabilities() {
@@ -184,7 +256,7 @@ export function fetchCapabilities() {
 }
 
 export function saveSettings(payload: AppSettings) {
-  return requestJson<AppSettings>(
+  return requestJson<unknown>(
     '/api/settings',
     {
       method: 'POST',
@@ -193,7 +265,7 @@ export function saveSettings(payload: AppSettings) {
       },
       body: JSON.stringify(payload),
     },
-  )
+  ).then((response) => normalizeSettingsPayload(response))
 }
 
 export function postSettingsConnectionTest(target: 'mineru' | 'translation', settings: AppSettings) {
@@ -245,6 +317,19 @@ export async function postUploadPdf(file: File) {
   }
 
   return response.json() as Promise<ProcessingTask>
+}
+
+export function postAnnotationAgentComment(paperId: string, payload: InvokeAnnotationAgentInput) {
+  return requestJson<PaperAnnotation[]>(
+    `/api/papers/${encodeURIComponent(paperId)}/annotations/agent-comment`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
 }
 
 export function fetchZoteroStatus() {
