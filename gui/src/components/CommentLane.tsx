@@ -1,9 +1,13 @@
 import type { MouseEvent, ReactNode } from 'react'
 import { Archive, Bot, ChevronDown, CornerDownLeft, MessageSquarePlus, Pencil, Send, Trash2, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
-import { MarkdownComment } from '@/components/MarkdownComment'
 import type { AnnotationComment, CopilotAgentConfig, PaperAnnotation, PaperView } from '@/types'
+
+const MarkdownComment = lazy(async () => {
+  const module = await import('@/components/MarkdownComment')
+  return { default: module.MarkdownComment }
+})
 
 export interface AnnotationComposerDraft {
   view: PaperView
@@ -44,6 +48,7 @@ interface CommentLaneProps {
   activeView: PaperView
   laneHeight: number
   agents: CopilotAgentConfig[]
+  activeAgentAnnotationIds: string[]
   draft: AnnotationComposerDraft | null
   savingDraft: boolean
   replyDraft: AnnotationReplyDraft | null
@@ -73,6 +78,7 @@ export function CommentLane({
   activeView,
   laneHeight,
   agents,
+  activeAgentAnnotationIds,
   draft,
   savingDraft,
   replyDraft,
@@ -180,6 +186,7 @@ export function CommentLane({
           const orderedComments = orderComments(annotation.comments)
           const leadComment = orderedComments[0]
           const compactMinHeight = estimateCardHeight(annotation)
+          const agentBusy = activeAgentAnnotationIds.includes(annotation.id)
           return (
             <article
               key={annotation.id}
@@ -316,7 +323,7 @@ export function CommentLane({
                         </div>
                       ) : (
                         <div className="mt-2 max-h-[10.5rem] overflow-hidden">
-                          <MarkdownComment content={comment.content} />
+                          <CompactCommentPreview content={comment.content} preview={comment.preview} />
                         </div>
                       )}
                     </section>
@@ -335,6 +342,13 @@ export function CommentLane({
                     <ChevronDown className="h-3.5 w-3.5" />
                     展开全部评论
                   </button>
+                ) : null}
+
+                {agentBusy ? (
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/20 bg-sky-300/[0.06] px-3 py-1.5 text-xs text-sky-200">
+                    <Bot className="h-3.5 w-3.5" />
+                    共读助手正在回复
+                  </div>
                 ) : null}
 
                 <div className="flex flex-wrap gap-2 pt-1">
@@ -847,7 +861,7 @@ function AgentCommentCard({
               <span className="cark-faint text-xs">共读助手</span>
             </div>
             <div className="mt-2 max-h-[10.5rem] overflow-hidden">
-              <MarkdownComment content={comment.content} />
+              <CompactCommentPreview content={comment.content} preview={comment.preview} />
             </div>
           </div>
         </div>
@@ -971,8 +985,26 @@ function ThreadDetailComment({
         </div>
       </div>
       <div className="mt-3">
-        <MarkdownComment content={comment.content} />
+        <Suspense fallback={<CompactCommentPreview content={comment.content} preview={comment.preview} />}>
+          <MarkdownComment content={comment.content} />
+        </Suspense>
       </div>
     </section>
   )
+}
+
+function CompactCommentPreview({ content, preview }: { content: string; preview?: string | null }) {
+  return (
+    <p className="cark-text whitespace-pre-line break-words text-sm leading-7">
+      {preview?.trim() || plainTextPreview(content)}
+    </p>
+  )
+}
+
+function plainTextPreview(content: string) {
+  return content
+    .replace(/[`*_~>#\-[\]()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
 }

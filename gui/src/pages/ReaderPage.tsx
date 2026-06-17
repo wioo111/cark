@@ -103,6 +103,7 @@ export default function ReaderPage() {
   const [savingReply, setSavingReply] = useState(false)
   const [editDraft, setEditDraft] = useState<AnnotationEditDraft | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
+  const [agentRunCounts, setAgentRunCounts] = useState<Record<string, number>>({})
   const [positionedAnnotations, setPositionedAnnotations] = useState<PaperAnnotation[]>([])
   const [annotationHighlights, setAnnotationHighlights] = useState<
     Array<{ annotationId: string; rects: Array<{ top: number; left: number; width: number; height: number }> }>
@@ -228,6 +229,10 @@ export default function ReaderPage() {
           agent.model.trim(),
       ),
     [settings.copilot.agents],
+  )
+  const activeAgentAnnotationIds = useMemo(
+    () => Object.entries(agentRunCounts).filter(([, count]) => count > 0).map(([annotationId]) => annotationId),
+    [agentRunCounts],
   )
 
   const markdown = useMemo(() => {
@@ -582,27 +587,37 @@ export default function ReaderPage() {
       return
     }
 
+    const draftSnapshot = draft
+    const userMessage = draft.content.trim()
     setSavingDraft(true)
     setAnnotationError(null)
     try {
-      const nextAnnotations = await upsertAnnotationComment(detail.id, annotations, draft, {
+      const nextAnnotations = await upsertAnnotationComment(detail.id, annotations, draftSnapshot, {
           authorType: 'user',
           authorLabel: '我的评论',
-          content: draft.content.trim(),
+          content: userMessage,
           status: 'ready',
         })
-      const annotationId = findExistingAnnotationId(nextAnnotations, draft)
-      let finalAnnotations = nextAnnotations
-      if (annotationId) {
-        finalAnnotations = await invokeMentionedAgents(detail.id, annotationId, draft.mentionAgentIds, draft.content.trim(), nextAnnotations)
-      }
-      setAnnotations(finalAnnotations)
+      const annotationId = findExistingAnnotationId(nextAnnotations, draftSnapshot)
+      setAnnotations(nextAnnotations)
       setFocusedAnnotationId(annotationId)
       setDraft(null)
       clearBrowserSelection()
+      setSavingDraft(false)
+
+      if (annotationId && draftSnapshot.mentionAgentIds.length > 0) {
+        void invokeMentionedAgents(
+          detail.id,
+          annotationId,
+          draftSnapshot.mentionAgentIds,
+          userMessage,
+          nextAnnotations,
+        ).catch((agentError) => {
+          setAnnotationError(formatAnnotationError('智能体回复失败', agentError))
+        })
+      }
     } catch (saveError) {
       setAnnotationError(formatAnnotationError('保存批注失败', saveError))
-    } finally {
       setSavingDraft(false)
     }
   }
@@ -626,32 +641,39 @@ export default function ReaderPage() {
       return
     }
 
+    const replySnapshot = replyDraft
+    const userMessage = replyDraft.content.trim()
     setSavingReply(true)
     setAnnotationError(null)
     try {
-      const nextAnnotations = await postAnnotationComment(detail.id, replyDraft.annotationId, {
+      const nextAnnotations = await postAnnotationComment(detail.id, replySnapshot.annotationId, {
           authorType: 'user',
           authorLabel: '我的评论',
-          replyToCommentId: replyDraft.followUpCommentId ?? undefined,
-          replyToAgentId: replyDraft.followUpAgentId ?? undefined,
-          content: replyDraft.content.trim(),
+          replyToCommentId: replySnapshot.followUpCommentId ?? undefined,
+          replyToAgentId: replySnapshot.followUpAgentId ?? undefined,
+          content: userMessage,
           status: 'ready',
         })
-      const finalAnnotations = await invokeMentionedAgents(
-        detail.id,
-        replyDraft.annotationId,
-        replyDraft.mentionAgentIds,
-        replyDraft.content.trim(),
-        nextAnnotations,
-        replyDraft.followUpCommentId ?? undefined,
-        replyDraft.followUpAgentId ?? undefined,
-      )
-      setAnnotations(finalAnnotations)
-      setFocusedAnnotationId(replyDraft.annotationId)
+      setAnnotations(nextAnnotations)
+      setFocusedAnnotationId(replySnapshot.annotationId)
       setReplyDraft(null)
+      setSavingReply(false)
+
+      if (replySnapshot.mentionAgentIds.length > 0) {
+        void invokeMentionedAgents(
+          detail.id,
+          replySnapshot.annotationId,
+          replySnapshot.mentionAgentIds,
+          userMessage,
+          nextAnnotations,
+          replySnapshot.followUpCommentId ?? undefined,
+          replySnapshot.followUpAgentId ?? undefined,
+        ).catch((agentError) => {
+          setAnnotationError(formatAnnotationError('智能体回复失败', agentError))
+        })
+      }
     } catch (saveError) {
       setAnnotationError(formatAnnotationError('追加评论失败', saveError))
-    } finally {
       setSavingReply(false)
     }
   }
@@ -755,16 +777,41 @@ export default function ReaderPage() {
     followUpCommentId?: string,
     followUpAgentId?: string,
   ) {
+    if (agentIds.length === 0) {
+      return initialAnnotations
+    }
+
     let nextAnnotations = initialAnnotations
-    for (const agentId of agentIds) {
-      nextAnnotations = await postAnnotationAgentComment(paperIdValue, {
-        agentId,
-        annotationId,
-        userMessage,
-        followUpCommentId: !followUpCommentId || !followUpAgentId || followUpAgentId === agentId ? followUpCommentId : undefined,
-      })
+    updateAgentRunCount(annotationId, 1)
+    try {
+      for (const agentId of agentIds) {
+        nextAnnotations = await postAnnotationAgentComment(paperIdValue, {
+          agentId,
+          annotationId,
+          userMessage,
+          followUpCommentId: !followUpCommentId || !followUpAgentId || followUpAgentId === agentId ? followUpCommentId : undefined,
+        })
+        setAnnotations(nextAnnotations)
+        setFocusedAnnotationId(annotationId)
+      }
+    } finally {
+      updateAgentRunCount(annotationId, -1)
     }
     return nextAnnotations
+  }
+
+  function updateAgentRunCount(annotationId: string, delta: number) {
+    setAgentRunCounts((current) => {
+      const nextCount = Math.max((current[annotationId] ?? 0) + delta, 0)
+      if (nextCount === 0) {
+        const { [annotationId]: _removed, ...rest } = current
+        return rest
+      }
+      return {
+        ...current,
+        [annotationId]: nextCount,
+      }
+    })
   }
 
   if (loading) {
@@ -965,6 +1012,7 @@ export default function ReaderPage() {
             activeView={activeView}
             laneHeight={laneHeight}
             agents={availableAgents}
+            activeAgentAnnotationIds={activeAgentAnnotationIds}
             draft={draft}
             savingDraft={savingDraft}
             replyDraft={replyDraft}
