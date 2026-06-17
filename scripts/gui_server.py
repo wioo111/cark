@@ -2167,6 +2167,11 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/papers":
             return self.write_json(list_papers())
 
+        if parsed.path in {"/favicon.ico", "/favicon.svg"}:
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.end_headers()
+            return
+
         paper_route = parse_paper_api_path(parsed.path)
         if paper_route:
             paper_id, remainder = paper_route
@@ -2207,7 +2212,7 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
             return self.serve_file(target)
 
-        if parsed.path.startswith("/assets/") or parsed.path == "/favicon.ico":
+        if parsed.path.startswith("/assets/"):
             return super().do_GET()
 
         if parsed.path != "/" and (GUI_DIST_DIR / parsed.path.lstrip("/")).exists():
