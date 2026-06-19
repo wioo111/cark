@@ -1,8 +1,22 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Archive, Bot, ChevronDown, CornerDownLeft, MessageSquarePlus, Pencil, Send, Trash2, X } from 'lucide-react'
+import {
+  Archive,
+  BookMarked,
+  Bot,
+  Check,
+  ChevronDown,
+  CornerDownLeft,
+  LoaderCircle,
+  MessageSquarePlus,
+  Pencil,
+  RefreshCw,
+  Send,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { AnnotationComment, CopilotAgentConfig, PaperAnnotation, PaperView } from '@/types'
+import type { AnnotationComment, CopilotAgentConfig, CopilotRun, PaperAnnotation, PaperView } from '@/types'
 
 const MarkdownComment = lazy(async () => {
   const module = await import('@/components/MarkdownComment')
@@ -11,6 +25,7 @@ const MarkdownComment = lazy(async () => {
 
 export interface AnnotationComposerDraft {
   view: PaperView
+  blockId?: string | null
   quote: string
   contextBefore?: string | null
   contextAfter?: string | null
@@ -46,9 +61,13 @@ export interface AnnotationEditDraft {
 interface CommentLaneProps {
   annotations: PaperAnnotation[]
   activeView: PaperView
+  focusCommentId?: string | null
   laneHeight: number
   agents: CopilotAgentConfig[]
   activeAgentAnnotationIds: string[]
+  copilotRuns: CopilotRun[]
+  memorySavingAnnotationIds: string[]
+  memorySavedAnnotationIds: string[]
   draft: AnnotationComposerDraft | null
   savingDraft: boolean
   replyDraft: AnnotationReplyDraft | null
@@ -65,20 +84,27 @@ interface CommentLaneProps {
   onReplyCancel: () => void
   onReplySubmit: () => void
   onReplyAgentToggle: (agentId: string) => void
+  onCancelCopilotRun: (runId: string) => void
+  onRetryCopilotRun: (runId: string, agentId?: string) => void
   onEditStart: (annotationId: string, comment: AnnotationComment) => void
   onEditChange: (value: string) => void
   onEditCancel: () => void
   onEditSubmit: () => void
   onArchiveToggle: (annotationId: string, nextArchived: boolean) => void
   onDeleteAnnotation: (annotationId: string) => void
+  onCreateMemoryFromAnnotation: (annotation: PaperAnnotation) => void
 }
 
 export function CommentLane({
   annotations,
   activeView,
+  focusCommentId,
   laneHeight,
   agents,
   activeAgentAnnotationIds,
+  copilotRuns,
+  memorySavingAnnotationIds,
+  memorySavedAnnotationIds,
   draft,
   savingDraft,
   replyDraft,
@@ -95,12 +121,15 @@ export function CommentLane({
   onReplyCancel,
   onReplySubmit,
   onReplyAgentToggle,
+  onCancelCopilotRun,
+  onRetryCopilotRun,
   onEditStart,
   onEditChange,
   onEditCancel,
   onEditSubmit,
   onArchiveToggle,
   onDeleteAnnotation,
+  onCreateMemoryFromAnnotation,
 }: CommentLaneProps) {
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [quoteDetailAnnotation, setQuoteDetailAnnotation] = useState<PaperAnnotation | null>(null)
@@ -178,6 +207,19 @@ export function CommentLane({
     }
   }, [archivedAnnotations.length])
 
+  useEffect(() => {
+    if (!focusCommentId) {
+      return
+    }
+    const targetAnnotation = annotations.find(
+      (annotation) =>
+        annotation.view === activeView && annotation.comments.some((comment) => comment.id === focusCommentId),
+    )
+    if (targetAnnotation) {
+      setThreadDetailAnnotation(targetAnnotation)
+    }
+  }, [activeView, annotations, focusCommentId])
+
   return (
     <aside className="relative">
       <div ref={laneRef} className="relative" style={{ minHeight: `${Math.max(laneHeight, 200)}px` }}>
@@ -187,6 +229,9 @@ export function CommentLane({
           const leadComment = orderedComments[0]
           const compactMinHeight = estimateCardHeight(annotation)
           const agentBusy = activeAgentAnnotationIds.includes(annotation.id)
+          const annotationCopilotRuns = copilotRuns.filter((run) => run.annotationId === annotation.id)
+          const memorySaving = memorySavingAnnotationIds.includes(annotation.id)
+          const memorySaved = memorySavedAnnotationIds.includes(annotation.id)
           return (
             <article
               key={annotation.id}
@@ -351,7 +396,35 @@ export function CommentLane({
                   </div>
                 ) : null}
 
+                <CopilotRunStack
+                  runs={annotationCopilotRuns}
+                  onCancel={onCancelCopilotRun}
+                  onRetry={onRetryCopilotRun}
+                />
+
                 <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onCreateMemoryFromAnnotation(annotation)
+                    }}
+                    disabled={memorySaving}
+                    aria-label="Create memory from annotation"
+                    className={[
+                      'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60',
+                      memorySaved ? 'cark-button-accent' : 'cark-button-secondary',
+                    ].join(' ')}
+                  >
+                    {memorySaving ? (
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    ) : memorySaved ? (
+                      <Check className="h-3.5 w-3.5" />
+                    ) : (
+                      <BookMarked className="h-3.5 w-3.5" />
+                    )}
+                    {memorySaving ? '沉淀中' : memorySaved ? '已沉淀' : '沉淀记忆'}
+                  </button>
                   <button
                     type="button"
                       onClick={(event) => {
@@ -656,6 +729,7 @@ export function CommentLane({
                   <ThreadDetailComment
                     key={comment.id}
                     comment={comment}
+                    highlighted={comment.id === focusCommentId}
                     agents={agents}
                     onReplyStart={(target) => {
                       onReplyStart(threadDetailAnnotation.id, target)
@@ -673,6 +747,102 @@ export function CommentLane({
         </div>
       ) : null}
     </aside>
+  )
+}
+
+function CopilotRunStack({
+  runs,
+  onCancel,
+  onRetry,
+}: {
+  runs: CopilotRun[]
+  onCancel: (runId: string) => void
+  onRetry: (runId: string, agentId?: string) => void
+}) {
+  const visibleRuns = runs.filter((run) => run.status !== 'done').slice(0, 3)
+  if (visibleRuns.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="space-y-2">
+      {visibleRuns.map((run) => {
+        const active = run.status === 'queued' || run.status === 'running'
+        const retryableAgents = run.agents.filter((agent) => agent.status === 'failed' || agent.status === 'canceled')
+        return (
+          <section
+            key={run.runId}
+            className="rounded-[18px] border border-sky-300/18 bg-sky-300/[0.05] px-3 py-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="inline-flex items-center gap-2 text-xs text-sky-200">
+                  {active ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
+                  <span>{copilotRunStatusLabel(run.status)}</span>
+                </div>
+                <p className="cark-faint mt-1 line-clamp-1 text-[11px]">
+                  第 {run.attempt} 次运行 · {run.agents.map((agent) => agent.agentName).join('、')}
+                </p>
+              </div>
+              {active ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onCancel(run.runId)
+                  }}
+                  className="cark-button-secondary inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  取消
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-2 space-y-1.5">
+              {run.agents.map((agent) => (
+                <div key={agent.agentId} className="flex items-start justify-between gap-2 rounded-[14px] bg-black/5 px-2.5 py-2">
+                  <div className="min-w-0">
+                    <p className="cark-text text-xs">{agent.agentName}</p>
+                    <p className="cark-faint mt-0.5 text-[11px]">{copilotRunStatusLabel(agent.status)}</p>
+                    {agent.error ? (
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-rose-200">{agent.error}</p>
+                    ) : null}
+                  </div>
+                  {agent.status === 'failed' || agent.status === 'canceled' ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onRetry(run.runId, agent.agentId)
+                      }}
+                      className="cark-button-secondary inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[11px]"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      重试
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            {run.status === 'failed' && retryableAgents.length > 1 ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onRetry(run.runId)
+                }}
+                className="cark-button-accent mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                重试全部失败助手
+              </button>
+            ) : null}
+          </section>
+        )
+      })}
+    </div>
   )
 }
 
@@ -734,6 +904,22 @@ function areMeasuredHeightsEqual(left: Record<string, number>, right: Record<str
 
 function needsExpansion(annotation: PaperAnnotation) {
   return annotation.comments.length > 2 || annotation.comments.some((comment) => comment.content.length > 200)
+}
+
+function copilotRunStatusLabel(status: CopilotRun['status']) {
+  if (status === 'queued') {
+    return '等待共读助手'
+  }
+  if (status === 'running') {
+    return '共读助手运行中'
+  }
+  if (status === 'failed') {
+    return '共读助手失败'
+  }
+  if (status === 'canceled') {
+    return '已取消'
+  }
+  return '已完成'
 }
 
 function formatTimeLabel(value: string) {
@@ -930,11 +1116,13 @@ function AgentCommentCard({
 
 function ThreadDetailComment({
   comment,
+  highlighted,
   agents,
   onReplyStart,
   onEditStart,
 }: {
   comment: AnnotationComment
+  highlighted?: boolean
   agents: CopilotAgentConfig[]
   onReplyStart: (target: AnnotationReplyTarget) => void
   onEditStart: (comment: AnnotationComment) => void
@@ -947,6 +1135,7 @@ function ThreadDetailComment({
         isUser
           ? 'border-amber-300/20 bg-amber-300/[0.06]'
           : 'border-sky-300/15 bg-sky-300/[0.05] text-[var(--text-secondary)]',
+        highlighted ? 'shadow-[0_0_0_1px_rgba(var(--accent-rgb),0.35)]' : '',
       ].join(' ')}
     >
       <div className="flex items-center justify-between gap-3">

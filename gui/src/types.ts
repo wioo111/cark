@@ -1,4 +1,5 @@
 export type PaperView = 'linearized' | 'bilingual'
+export type PaperReadingStatus = 'unread' | 'reading' | 'done'
 export type ParseBackend = 'local' | 'cloud'
 export type MineruModelVersion = 'pipeline' | 'vlm'
 export type ImageMode = 'strip' | 'note' | 'keep'
@@ -11,6 +12,128 @@ export interface PaperSummary {
   availableViews: PaperView[]
   hasImages: boolean
   sourcePdf?: string | null
+  favorite?: boolean
+  tags?: string[]
+  readingStatus?: PaperReadingStatus
+  annotationCount?: number
+  memoryCount?: number
+  lastReadAt?: string | null
+  libraryUpdatedAt?: string | null
+}
+
+export interface UpdatePaperLibraryInput {
+  favorite?: boolean
+  tags?: string[]
+  readingStatus?: PaperReadingStatus
+}
+
+export type AgentMemoryType = 'profile' | 'preference' | 'research_interest' | 'instruction' | 'project' | 'concept'
+export type AgentMemoryStatus = 'active' | 'archived'
+export type MemoryActivationStatus = 'candidate' | 'active' | 'archived'
+
+export interface MemoryRevision {
+  updatedAt: string
+  reason: string
+  text: string
+  status: string
+  activationStatus: MemoryActivationStatus
+  confidence: number
+}
+
+export interface AgentMemorySource {
+  kind?: string
+  paperId?: string
+  annotationId?: string
+  commentId?: string
+  runId?: string
+  memoryId?: string
+  note?: string
+  userAction?: string
+}
+
+export interface MemoryEvidence {
+  kind?: string
+  quote?: string
+  contextBefore?: string
+  contextAfter?: string
+  blockId?: string
+  annotationId?: string
+  commentId?: string
+  view?: PaperView
+}
+
+export interface StableLocator {
+  view?: PaperView | null
+  annotationId?: string | null
+  commentId?: string | null
+  memoryItemId?: string | null
+  blockId?: string | null
+  quote?: string | null
+  contextBefore?: string | null
+  contextAfter?: string | null
+}
+
+export interface AgentMemoryItem {
+  id: string
+  memoryLayer?: 'global'
+  type: AgentMemoryType
+  text: string
+  tags: string[]
+  source?: AgentMemorySource | null
+  evidence?: MemoryEvidence[]
+  confidence: number
+  status: AgentMemoryStatus
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
+  revisionHistory?: MemoryRevision[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentMemoryPayload {
+  items: AgentMemoryItem[]
+  activeItems: AgentMemoryItem[]
+  candidateItems?: AgentMemoryItem[]
+  relevantItems: AgentMemoryItem[]
+  itemCount: number
+  activeCount: number
+  candidateCount?: number
+  lastUpdated?: string | null
+}
+
+export interface CreateAgentMemoryInput {
+  type: AgentMemoryType
+  text: string
+  tags?: string[]
+  source?: AgentMemorySource | null
+  evidence?: MemoryEvidence[]
+  confidence?: number
+  status?: AgentMemoryStatus
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
+}
+
+export type UpdateAgentMemoryInput = Partial<CreateAgentMemoryInput>
+
+export type SearchResultSource = 'title' | 'body' | 'annotation' | 'memory'
+
+export interface SearchResult {
+  id: string
+  paperId: string
+  paperTitle: string
+  source: SearchResultSource
+  sourceLabel: string
+  snippet: string
+  score: number
+  view?: PaperView | null
+  annotationId?: string | null
+  memoryItemId?: string | null
+  locator?: StableLocator | null
+  matchQuote?: string | null
+  matchContextBefore?: string | null
+  matchContextAfter?: string | null
 }
 
 export interface PaperStats {
@@ -37,17 +160,45 @@ export interface PaperBlock {
   bbox?: number[]
 }
 
-export interface PaperNote {
+export type MemoryItemType = 'note' | 'question' | 'action' | 'insight'
+export type MemoryItemStatus = 'active' | 'done' | 'archived'
+
+export interface PaperMemoryAnchor {
+  view?: PaperView | null
+  quote?: string | null
+  contextBefore?: string | null
+  contextAfter?: string | null
+  anchorTop?: number | null
+  anchorHeight?: number | null
+}
+
+export interface PaperMemoryItem {
   id: string
   paperId: string
+  memoryLayer?: 'paper'
+  type: MemoryItemType
+  text: string
   content: string
+  sourceAnnotationId?: string | null
+  source?: AgentMemorySource | null
+  locator?: StableLocator | null
+  anchor?: PaperMemoryAnchor | null
   createdAt: string
   updatedAt: string
   blockId?: string | null
   blockPreview?: string | null
   quote?: string | null
+  evidence?: MemoryEvidence[]
+  confidence?: number
   tags: string[]
+  status: MemoryItemStatus
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
+  revisionHistory?: MemoryRevision[]
 }
+
+export type PaperNote = PaperMemoryItem
 
 export interface PaperMemory {
   paperId: string
@@ -58,15 +209,83 @@ export interface PaperMemory {
   recommendedActions: string[]
   noteCount: number
   lastUpdated: string | null
+  items: PaperMemoryItem[]
+  activeItems?: PaperMemoryItem[]
+  candidateItems?: PaperMemoryItem[]
+  activeCount?: number
+  candidateCount?: number
+  notes: PaperMemoryItem[]
+  questions: PaperMemoryItem[]
+  actions: PaperMemoryItem[]
+  insights: PaperMemoryItem[]
   recentNotes: PaperNote[]
 }
 
+export interface PaperMemoryMarkdownExport {
+  paperId: string
+  title: string
+  format: 'markdown'
+  fileName: string
+  filePath: string
+  markdown: string
+  createdAt: string
+  itemCount: number
+}
+
 export interface CreatePaperNoteInput {
+  type?: MemoryItemType
   content: string
+  text?: string
   blockId?: string | null
   blockPreview?: string | null
+  sourceAnnotationId?: string | null
   quote?: string | null
+  anchor?: PaperMemoryAnchor | null
   tags?: string[]
+  status?: MemoryItemStatus
+  source?: AgentMemorySource | null
+  evidence?: MemoryEvidence[]
+  confidence?: number
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
+}
+
+export interface CreatePaperMemoryItemInput {
+  type: MemoryItemType
+  text: string
+  sourceAnnotationId?: string | null
+  quote?: string | null
+  anchor?: PaperMemoryAnchor | null
+  blockId?: string | null
+  blockPreview?: string | null
+  tags?: string[]
+  status?: MemoryItemStatus
+  source?: AgentMemorySource | null
+  evidence?: MemoryEvidence[]
+  confidence?: number
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
+}
+
+export interface UpdatePaperMemoryItemInput {
+  type?: MemoryItemType
+  text?: string
+  content?: string
+  sourceAnnotationId?: string | null
+  quote?: string | null
+  anchor?: PaperMemoryAnchor | null
+  blockId?: string | null
+  blockPreview?: string | null
+  tags?: string[]
+  status?: MemoryItemStatus
+  source?: AgentMemorySource | null
+  evidence?: MemoryEvidence[]
+  confidence?: number
+  activationStatus?: MemoryActivationStatus
+  derivedFrom?: string[]
+  conflictsWith?: string[]
 }
 
 export type AnnotationAuthorType = 'user' | 'agent'
@@ -81,9 +300,48 @@ export interface AnnotationComment {
   replyToAgentId?: string | null
   content: string
   preview: string
+  locator?: StableLocator | null
   createdAt: string
   updatedAt: string
   status: AnnotationCommentStatus
+}
+
+export type CopilotRunStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
+
+export interface CopilotRunAgent {
+  agentId: string
+  agentName: string
+  status: CopilotRunStatus
+  resultCommentId?: string | null
+  error?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface CopilotRun {
+  runId: string
+  paperId: string
+  annotationId: string
+  agents: CopilotRunAgent[]
+  status: CopilotRunStatus
+  userMessage: string
+  followUpCommentId?: string | null
+  followUpAgentId?: string | null
+  results: Array<Record<string, unknown>>
+  errors: Array<{ agentId?: string; message?: string; createdAt?: string }>
+  createdAt: string
+  updatedAt: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  attempt: number
+}
+
+export interface CreateCopilotRunInput {
+  annotationId: string
+  agentIds: string[]
+  userMessage?: string
+  followUpCommentId?: string
+  followUpAgentId?: string
 }
 
 export interface PaperAnnotation {
@@ -93,6 +351,8 @@ export interface PaperAnnotation {
   quote: string
   contextBefore?: string | null
   contextAfter?: string | null
+  blockId?: string | null
+  locator?: StableLocator | null
   anchorTop: number
   anchorHeight: number
   createdAt: string
@@ -107,6 +367,7 @@ export interface CreatePaperAnnotationInput {
   quote: string
   contextBefore?: string | null
   contextAfter?: string | null
+  blockId?: string | null
   anchorTop: number
   anchorHeight: number
   initialComment: {

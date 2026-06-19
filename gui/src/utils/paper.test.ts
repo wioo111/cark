@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import type { PaperSummary } from '@/types'
+import type { PaperSummary, SearchResult } from '@/types'
 import {
+  buildSearchResultHref,
   cleanBilingualMarkdown,
   extractBilingualOutline,
   extractOutline,
@@ -69,5 +70,44 @@ describe('paper utils', () => {
     expect(matchesQuery(paper, 'think')).toBe(true)
     expect(matchesQuery(paper, 'classic_1945')).toBe(true)
     expect(matchesQuery(paper, 'foobar')).toBe(false)
+  })
+
+  it('builds reader links with precise annotation and memory targets', () => {
+    const result: SearchResult = {
+      id: 'result-1',
+      paperId: 'paper-1',
+      paperTitle: 'Paper',
+      source: 'memory',
+      sourceLabel: 'Memory',
+      snippet: 'snippet',
+      score: 1,
+      view: 'linearized',
+      annotationId: 'annotation-1',
+      memoryItemId: 'memory-1',
+    }
+
+    expect(buildSearchResultHref(result)).toBe(
+      '/reader/paper-1?view=linearized&annotation=annotation-1&memory=memory-1',
+    )
+  })
+
+  it('builds reader links with body locator context', () => {
+    const result: SearchResult = {
+      id: 'result-2',
+      paperId: 'paper-1',
+      paperTitle: 'Paper',
+      source: 'body',
+      sourceLabel: '正文',
+      snippet: 'snippet',
+      score: 2,
+      view: 'linearized',
+      matchQuote: 'embodied interaction and situated action',
+      matchContextBefore: 'This paper studies',
+      matchContextAfter: 'in everyday practice',
+    }
+
+    expect(buildSearchResultHref(result)).toBe(
+      '/reader/paper-1?view=linearized&quote=embodied+interaction+and+situated+action&before=This+paper+studies&after=in+everyday+practice',
+    )
   })
 })

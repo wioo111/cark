@@ -10,6 +10,7 @@ interface WorkspaceState {
   recentPaperIds: string[]
   refreshPapers: () => Promise<void>
   rememberPaper: (id: string) => void
+  updatePaper: (paper: PaperSummary) => void
 }
 
 const RECENT_KEY = 'cark-gui-recent-paper-ids'
@@ -54,5 +55,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       saveRecentPaperIds(recentPaperIds)
       return { recentPaperIds }
     })
+  },
+  updatePaper: (paper) => {
+    set((state) => ({
+      papers: state.papers.map((item) => (item.id === paper.id ? { ...item, ...paper } : item)),
+    }))
   },
 }))

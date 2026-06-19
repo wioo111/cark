@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import gui_locator
 
 ACTIVE_TASK_STATUSES = ("queued", "running")
 
@@ -87,6 +88,7 @@ class WorkbenchStore:
     def __init__(self, database_path: Path):
         self.database_path = database_path
         self._lock = threading.RLock()
+        self._fts_enabled = True
         self.initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -157,6 +159,28 @@ class WorkbenchStore:
                 );
                 """
             )
+            try:
+                connection.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS search_entries_fts USING fts5(
+                        id UNINDEXED,
+                        paper_id UNINDEXED,
+                        paper_title,
+                        source UNINDEXED,
+                        source_label UNINDEXED,
+                        view UNINDEXED,
+                        annotation_id UNINDEXED,
+                        memory_item_id UNINDEXED,
+                        text,
+                        haystack,
+                        indexed_at UNINDEXED,
+                        tokenize='unicode61'
+                    )
+                    """
+                )
+                self._fts_enabled = True
+            except sqlite3.OperationalError:
+                self._fts_enabled = False
             task_columns = {
                 str(row["name"])
                 for row in connection.execute("PRAGMA table_info(tasks)").fetchall()
@@ -420,6 +444,84 @@ class WorkbenchStore:
             rows = connection.execute("SELECT * FROM papers ORDER BY updated_at DESC").fetchall()
         return [_paper_from_row(row) for row in rows]
 
+    def replace_search_entries(self, entries: list[dict[str, object]], indexed_at: str):
+        if not self._fts_enabled:
+            return
+        with self._lock, self._connection() as connection:
+            connection.execute("DELETE FROM search_entries_fts")
+            connection.executemany(
+                """
+                INSERT INTO search_entries_fts (
+                    id, paper_id, paper_title, source, source_label, view,
+                    annotation_id, memory_item_id, text, haystack, indexed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(entry.get("id") or ""),
+                        str(entry.get("paperId") or ""),
+                        str(entry.get("paperTitle") or ""),
+                        str(entry.get("source") or ""),
+                        str(entry.get("sourceLabel") or ""),
+                        str(entry.get("view") or "") or None,
+                        str(entry.get("annotationId") or "") or None,
+                        str(entry.get("memoryItemId") or "") or None,
+                        str(entry.get("text") or ""),
+                        str(entry.get("haystack") or _normalize_search_text(f"{entry.get('paperTitle') or ''} {entry.get('text') or ''}")),
+                        indexed_at,
+                    )
+                    for entry in entries
+                ],
+            )
+
+    def search_search_entries(self, terms: list[str], limit: int = 80) -> list[dict[str, object]] | None:
+        if not self._fts_enabled:
+            return None
+        cleaned_terms = [term.strip() for term in terms if isinstance(term, str) and term.strip()]
+        if not cleaned_terms:
+            return []
+        match_query = " AND ".join(f'"{term.replace("\"", "\"\"")}"' for term in cleaned_terms)
+        with self._lock, self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    id,
+                    paper_id,
+                    paper_title,
+                    source,
+                    source_label,
+                    view,
+                    annotation_id,
+                    memory_item_id,
+                    text,
+                    haystack
+                FROM search_entries_fts
+                WHERE search_entries_fts MATCH ?
+                LIMIT ?
+                """,
+                (match_query, max(1, min(limit, 200)) * 4),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "paperId": row["paper_id"],
+                "paperTitle": row["paper_title"],
+                "source": row["source"],
+                "sourceLabel": row["source_label"],
+                "view": row["view"],
+                "annotationId": row["annotation_id"],
+                "memoryItemId": row["memory_item_id"],
+                "locator": gui_locator.build_locator(
+                    view=row["view"],
+                    annotation_id=row["annotation_id"],
+                    memory_item_id=row["memory_item_id"],
+                ),
+                "text": row["text"],
+                "haystack": row["haystack"],
+            }
+            for row in rows
+        ]
+
     def record_zotero_import(
         self,
         attachment_key: str,
@@ -551,6 +653,10 @@ def _load_json(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return fallback
+
+
+def _normalize_search_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold()).strip()
 
 
 def _task_from_row(row: sqlite3.Row) -> dict[str, object]:

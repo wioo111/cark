@@ -1,10 +1,13 @@
 import { AlertCircle, RefreshCw, Search, Settings2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import {
   fetchCapabilities,
+  fetchSearchResults,
   fetchSettings,
   fetchTasks,
+  patchPaperLibrary,
   postRetryTask,
   postUploadPdf,
 } from '@/api'
@@ -15,8 +18,28 @@ import { ThemeSwitch } from '@/components/ThemeSwitch'
 import { UploadPanel } from '@/components/UploadPanel'
 import { ZoteroImportDialog } from '@/components/ZoteroImportDialog'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
-import type { AppCapabilities, AppSettings, ProcessingTask } from '@/types'
-import { matchesQuery } from '@/utils/paper'
+import type {
+  AppCapabilities,
+  AppSettings,
+  PaperReadingStatus,
+  PaperSummary,
+  ProcessingTask,
+  SearchResult,
+  UpdatePaperLibraryInput,
+} from '@/types'
+import { buildSearchResultHref, matchesQuery } from '@/utils/paper'
+
+type LibraryFilter = 'all' | 'favorite' | 'annotated' | 'memory' | PaperReadingStatus
+
+const libraryFilterOptions: Array<{ value: LibraryFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'favorite', label: '收藏' },
+  { value: 'annotated', label: '有批注' },
+  { value: 'memory', label: '有记忆' },
+  { value: 'unread', label: '未读' },
+  { value: 'reading', label: '阅读中' },
+  { value: 'done', label: '已读' },
+]
 
 function createFallbackSettings(): AppSettings {
   return {
@@ -69,12 +92,20 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null)
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all')
+  const [tagFilter, setTagFilter] = useState('all')
+  const [updatingPaperId, setUpdatingPaperId] = useState<string | null>(null)
   const papers = useWorkspaceStore((state) => state.papers)
   const papersLoading = useWorkspaceStore((state) => state.loading)
   const papersError = useWorkspaceStore((state) => state.error)
   const recentPaperIds = useWorkspaceStore((state) => state.recentPaperIds)
   const refreshPapers = useWorkspaceStore((state) => state.refreshPapers)
+  const updatePaper = useWorkspaceStore((state) => state.updatePaper)
   const completedTaskIdsRef = useRef<Set<string>>(new Set())
+  const hasQuery = query.trim().length > 0
   const uploadBlocked = capabilities === null || !capabilities.ready
   const uploadBlockedReason = capabilities === null
     ? '正在检查这台电脑的可用能力。'
@@ -145,10 +176,88 @@ export default function Home() {
     }
   }, [refreshPapers, tasks])
 
+  const allTags = useMemo(() => {
+    const tags = new Set<string>()
+    for (const paper of papers) {
+      for (const tag of paper.tags ?? []) {
+        tags.add(tag)
+      }
+    }
+    return Array.from(tags).sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'))
+  }, [papers])
+
+  useEffect(() => {
+    if (tagFilter !== 'all' && !allTags.includes(tagFilter)) {
+      setTagFilter('all')
+    }
+  }, [allTags, tagFilter])
+
   const filteredPapers = useMemo(
-    () => papers.filter((paper) => matchesQuery(paper, query)),
-    [papers, query],
+    () =>
+      papers.filter((paper) => {
+        if (!matchesQuery(paper, query)) {
+          return false
+        }
+        if (libraryFilter === 'favorite' && !paper.favorite) {
+          return false
+        }
+        if (libraryFilter === 'annotated' && (paper.annotationCount ?? 0) === 0) {
+          return false
+        }
+        if (libraryFilter === 'memory' && (paper.memoryCount ?? 0) === 0) {
+          return false
+        }
+        if (
+          (libraryFilter === 'unread' || libraryFilter === 'reading' || libraryFilter === 'done') &&
+          (paper.readingStatus ?? 'unread') !== libraryFilter
+        ) {
+          return false
+        }
+        if (tagFilter !== 'all' && !(paper.tags ?? []).includes(tagFilter)) {
+          return false
+        }
+        return true
+      }),
+    [libraryFilter, papers, query, tagFilter],
   )
+
+  useEffect(() => {
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) {
+      setSearchResults([])
+      setSearchLoading(false)
+      setSearchError(null)
+      return
+    }
+
+    let cancelled = false
+    setSearchLoading(true)
+    setSearchError(null)
+    const timerId = window.setTimeout(() => {
+      void fetchSearchResults(trimmedQuery)
+        .then((payload) => {
+          if (!cancelled) {
+            setSearchResults(payload)
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setSearchResults([])
+            setSearchError(error instanceof Error ? error.message : '搜索失败')
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setSearchLoading(false)
+          }
+        })
+    }, 220)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timerId)
+    }
+  }, [query])
 
   const recentPapers = useMemo(() => {
     const paperById = new Map(papers.map((paper) => [paper.id, paper]))
@@ -246,6 +355,33 @@ export default function Home() {
     }
   }
 
+  async function handleLibraryUpdate(paper: PaperSummary, payload: UpdatePaperLibraryInput) {
+    setUpdatingPaperId(paper.id)
+    try {
+      const nextPaper = await patchPaperLibrary(paper.id, payload)
+      updatePaper(nextPaper)
+      setBootstrapError(null)
+    } catch (error) {
+      setBootstrapError(error instanceof Error ? error.message : '文库更新失败')
+    } finally {
+      setUpdatingPaperId(null)
+    }
+  }
+
+  function handleTagsEdit(paper: PaperSummary) {
+    const currentTags = (paper.tags ?? []).join(', ')
+    const value = window.prompt('标签，用空格或逗号分隔', currentTags)
+    if (value === null) {
+      return
+    }
+    const tags = value
+      .split(/[,\s，、]+/u)
+      .map((tag) => tag.trim())
+      .filter((tag, index, values) => tag.length > 0 && values.indexOf(tag) === index)
+      .slice(0, 12)
+    void handleLibraryUpdate(paper, { tags })
+  }
+
   return (
     <main className="cark-page min-h-screen">
       <div className="mx-auto min-h-screen max-w-[1600px] px-6 py-6 lg:px-8">
@@ -332,21 +468,102 @@ export default function Home() {
               </div>
             </div>
 
-            {!query && recentPapers.length > 0 ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {libraryFilterOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setLibraryFilter(option.value)}
+                  className={[
+                    'rounded-full px-3 py-1.5 text-xs transition',
+                    libraryFilter === option.value ? 'cark-button-accent' : 'cark-button-secondary',
+                  ].join(' ')}
+                >
+                  {option.label}
+                </button>
+              ))}
+              {allTags.length > 0 ? (
+                <select
+                  value={tagFilter}
+                  onChange={(event) => setTagFilter(event.target.value)}
+                  aria-label="标签筛选"
+                  className="cark-input rounded-full px-3 py-1.5 text-xs outline-none"
+                >
+                  <option value="all">全部标签</option>
+                  {allTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+
+            {!hasQuery && recentPapers.length > 0 ? (
               <section className="mt-6">
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="cark-text text-sm font-medium">最近阅读</h3>
                   <span className="cark-faint text-xs">{recentPapers.length}</span>
                 </div>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  {recentPapers.map((paper) => <PaperListItem key={paper.id} paper={paper} recent />)}
+                  {recentPapers.map((paper) => (
+                    <PaperListItem
+                      key={paper.id}
+                      paper={paper}
+                      recent
+                      updating={updatingPaperId === paper.id}
+                      onFavoriteToggle={(targetPaper) =>
+                        void handleLibraryUpdate(targetPaper, { favorite: !targetPaper.favorite })
+                      }
+                      onReadingStatusChange={(targetPaper, readingStatus) =>
+                        void handleLibraryUpdate(targetPaper, { readingStatus })
+                      }
+                      onTagsEdit={handleTagsEdit}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {hasQuery ? (
+              <section className="mt-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="cark-text text-sm font-medium">全文命中</h3>
+                  <span className="cark-faint text-xs">{searchLoading ? '搜索中' : searchResults.length}</span>
+                </div>
+                {searchError ? (
+                  <div className="mb-3 rounded-[20px] border border-rose-400/20 bg-rose-400/10 p-4 text-sm text-rose-100">
+                    {searchError}
+                  </div>
+                ) : null}
+                <div className="grid gap-3">
+                  {searchResults.slice(0, 12).map((result) => (
+                    <Link
+                      key={result.id}
+                      to={buildSearchResultHref(result)}
+                      className="cark-card block rounded-[22px] px-4 py-4 transition hover:border-[rgba(var(--accent-rgb),0.35)] hover:bg-[var(--surface-soft)]"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="cark-title line-clamp-1 text-sm">{result.paperTitle}</p>
+                        <span className="cark-chip-accent rounded-full px-2.5 py-1 text-[11px]">
+                          {result.sourceLabel}
+                        </span>
+                      </div>
+                      <p className="cark-muted mt-2 line-clamp-3 text-sm leading-6">{result.snippet}</p>
+                    </Link>
+                  ))}
+                  {!searchLoading && !searchError && searchResults.length === 0 ? (
+                    <div className="cark-faint rounded-[20px] border border-dashed [border-color:var(--border-strong)] px-4 py-5 text-center text-sm">
+                      没有正文、批注或记忆命中。
+                    </div>
+                  ) : null}
                 </div>
               </section>
             ) : null}
 
             <section className="mt-6">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="cark-text text-sm font-medium">{query ? '搜索结果' : '全部论文'}</h3>
+                <h3 className="cark-text text-sm font-medium">{hasQuery ? '搜索结果' : '全部论文'}</h3>
                 <span className="cark-faint text-xs">{filteredPapers.length}</span>
               </div>
               {papersError ? (
@@ -355,10 +572,23 @@ export default function Home() {
                 </div>
               ) : null}
               <div className="grid gap-3">
-                {filteredPapers.map((paper) => <PaperListItem key={paper.id} paper={paper} />)}
+                {filteredPapers.map((paper) => (
+                  <PaperListItem
+                    key={paper.id}
+                    paper={paper}
+                    updating={updatingPaperId === paper.id}
+                    onFavoriteToggle={(targetPaper) =>
+                      void handleLibraryUpdate(targetPaper, { favorite: !targetPaper.favorite })
+                    }
+                    onReadingStatusChange={(targetPaper, readingStatus) =>
+                      void handleLibraryUpdate(targetPaper, { readingStatus })
+                    }
+                    onTagsEdit={handleTagsEdit}
+                  />
+                ))}
                 {!papersLoading && filteredPapers.length === 0 ? (
                   <div className="cark-faint rounded-[22px] border border-dashed [border-color:var(--border-strong)] px-5 py-8 text-center text-sm">
-                    {query ? '没有匹配的论文。' : '还没有论文。上传第一篇 PDF。'}
+                    {hasQuery ? '没有匹配的论文。' : '还没有论文。上传第一篇 PDF。'}
                   </div>
                 ) : null}
               </div>

@@ -1,20 +1,37 @@
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, BookOpen, CheckCircle2, Circle, MessageSquareText, Star, Tags } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
-import type { PaperSummary } from '@/types'
+import type { PaperReadingStatus, PaperSummary } from '@/types'
 import { formatUpdatedAt } from '@/utils/paper'
 
 interface PaperListItemProps {
   paper: PaperSummary
   recent?: boolean
+  updating?: boolean
+  onFavoriteToggle?: (paper: PaperSummary) => void
+  onReadingStatusChange?: (paper: PaperSummary, status: PaperReadingStatus) => void
+  onTagsEdit?: (paper: PaperSummary) => void
 }
 
-export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
+const statusOptions: Array<{ value: PaperReadingStatus; label: string }> = [
+  { value: 'unread', label: '未读' },
+  { value: 'reading', label: '阅读中' },
+  { value: 'done', label: '已读' },
+]
+
+export function PaperListItem({
+  paper,
+  recent = false,
+  updating = false,
+  onFavoriteToggle,
+  onReadingStatusChange,
+  onTagsEdit,
+}: PaperListItemProps) {
+  const readingStatus = paper.readingStatus ?? 'unread'
+  const tags = paper.tags ?? []
+
   return (
-    <Link
-      to={`/reader/${encodeURIComponent(paper.id)}`}
-      className="cark-card group flex min-w-0 w-full overflow-hidden rounded-[28px] px-5 py-5 transition duration-200 hover:border-[rgba(var(--accent-rgb),0.35)] hover:bg-[var(--surface-soft)]"
-    >
+    <article className="cark-card group flex min-w-0 w-full overflow-hidden rounded-[28px] px-5 py-5 transition duration-200 hover:border-[rgba(var(--accent-rgb),0.35)] hover:bg-[var(--surface-soft)]">
       <div className="flex min-w-0 w-full items-start justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -23,19 +40,101 @@ export function PaperListItem({ paper, recent = false }: PaperListItemProps) {
                 最近阅读
               </span>
             ) : null}
+            {paper.favorite ? (
+              <span className="cark-chip-accent inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px]">
+                <Star className="h-3 w-3 fill-current" />
+                收藏
+              </span>
+            ) : null}
+            <span className="cark-button-secondary inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px]">
+              {renderStatusIcon(readingStatus)}
+              {statusOptions.find((item) => item.value === readingStatus)?.label}
+            </span>
           </div>
-          <h3 className="cark-title max-w-full break-all font-serif text-xl">
-            {paper.title}
-          </h3>
+
+          <Link to={`/reader/${encodeURIComponent(paper.id)}`} className="block">
+            <h3 className="cark-title max-w-full break-all font-serif text-xl">
+              {paper.title}
+            </h3>
+          </Link>
+
           <p className="cark-muted text-sm">更新于 {formatUpdatedAt(paper.updatedAt)}</p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="cark-faint inline-flex items-center gap-1 text-xs">
+              <MessageSquareText className="h-3.5 w-3.5" />
+              批注 {paper.annotationCount ?? 0}
+            </span>
+            <span className="cark-faint inline-flex items-center gap-1 text-xs">
+              <BookOpen className="h-3.5 w-3.5" />
+              记忆 {paper.memoryCount ?? 0}
+            </span>
+            {tags.map((tag) => (
+              <span key={tag} className="cark-chip-accent rounded-full px-2 py-1 text-[11px]">
+                {tag}
+              </span>
+            ))}
+          </div>
         </div>
 
-        <div className="cark-faint shrink-0 flex items-center gap-2 transition group-hover:text-[rgba(var(--accent-rgb),0.92)]">
-          <span className="text-xs">阅读</span>
-          <ArrowRight className="h-4 w-4" />
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={updating}
+              onClick={() => onFavoriteToggle?.(paper)}
+              aria-label={paper.favorite ? 'Unfavorite paper' : 'Favorite paper'}
+              className={[
+                'inline-flex h-9 w-9 items-center justify-center rounded-full disabled:cursor-not-allowed disabled:opacity-60',
+                paper.favorite ? 'cark-button-accent' : 'cark-button-secondary',
+              ].join(' ')}
+            >
+              <Star className={`h-4 w-4 ${paper.favorite ? 'fill-current' : ''}`} />
+            </button>
+            <button
+              type="button"
+              disabled={updating}
+              onClick={() => onTagsEdit?.(paper)}
+              aria-label="Edit paper tags"
+              className="cark-button-secondary inline-flex h-9 w-9 items-center justify-center rounded-full disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Tags className="h-4 w-4" />
+            </button>
+          </div>
+
+          <select
+            value={readingStatus}
+            disabled={updating}
+            onChange={(event) => onReadingStatusChange?.(paper, event.target.value as PaperReadingStatus)}
+            aria-label="Paper reading status"
+            className="cark-input rounded-full px-3 py-2 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {statusOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+
+          <Link
+            to={`/reader/${encodeURIComponent(paper.id)}`}
+            className="cark-faint flex items-center gap-2 transition group-hover:text-[rgba(var(--accent-rgb),0.92)]"
+          >
+            <span className="text-xs">阅读</span>
+            <ArrowRight className="h-4 w-4" />
+          </Link>
         </div>
       </div>
-
-    </Link>
+    </article>
   )
+}
+
+function renderStatusIcon(status: PaperReadingStatus) {
+  if (status === 'done') {
+    return <CheckCircle2 className="h-3.5 w-3.5" />
+  }
+  if (status === 'reading') {
+    return <BookOpen className="h-3.5 w-3.5" />
+  }
+  return <Circle className="h-3.5 w-3.5" />
 }

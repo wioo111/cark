@@ -112,6 +112,42 @@ class WorkbenchStoreTests(unittest.TestCase):
         self.assertEqual(state["scrollY"], 840.5)
         self.assertEqual(state["draft"]["content"], "unfinished")
 
+    def test_search_index_survives_reopen(self):
+        entries = [
+            {
+                "id": "paper-1:title:title",
+                "paperId": "paper-1",
+                "paperTitle": "Where the Action Is",
+                "source": "title",
+                "sourceLabel": "标题",
+                "view": None,
+                "annotationId": None,
+                "memoryItemId": None,
+                "text": "Where the Action Is",
+                "haystack": "where the action is",
+            },
+            {
+                "id": "paper-1:memory:memory-1",
+                "paperId": "paper-1",
+                "paperTitle": "Where the Action Is",
+                "source": "memory",
+                "sourceLabel": "记忆",
+                "view": "linearized",
+                "annotationId": "annotation-1",
+                "memoryItemId": "memory-1",
+                "text": "Durable memory about interaction design.",
+                "haystack": "where the action is durable memory about interaction design",
+            },
+        ]
+        self.store.replace_search_entries(entries, "2026-06-18T00:00:00")
+
+        reopened = WorkbenchStore(self.store.database_path)
+        results = reopened.search_search_entries(["interaction"], limit=10)
+
+        self.assertIsNotNone(results)
+        self.assertEqual(results[0]["source"], "memory")
+        self.assertEqual(results[0]["memoryItemId"], "memory-1")
+
     def test_paper_sync_removes_missing_records(self):
         first = {
             "id": "paper-1",

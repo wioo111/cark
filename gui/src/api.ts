@@ -1,19 +1,29 @@
 import type {
   AppSettings,
   AppCapabilities,
+  AgentMemoryPayload,
   ConnectionTestResult,
+  CopilotRun,
   CopilotAgentConfig,
+  CreateAgentMemoryInput,
+  CreateCopilotRunInput,
   CreateAnnotationCommentInput,
   InvokeAnnotationAgentInput,
+  CreatePaperMemoryItemInput,
   CreatePaperAnnotationInput,
   CreatePaperNoteInput,
   PaperAnnotation,
   PaperDetail,
   PaperMemory,
+  PaperMemoryMarkdownExport,
   PaperSummary,
   ProcessingTask,
   ReadingState,
+  SearchResult,
+  UpdateAgentMemoryInput,
   UpdateAnnotationCommentInput,
+  UpdatePaperLibraryInput,
+  UpdatePaperMemoryItemInput,
   UpdatePaperAnnotationInput,
   ZoteroPaper,
   ZoteroStatus,
@@ -109,8 +119,72 @@ export function fetchPapers() {
   return requestJson<PaperSummary[]>('/api/papers')
 }
 
+export function fetchAgentMemory(query = '') {
+  const params = new URLSearchParams()
+  if (query.trim()) {
+    params.set('q', query.trim())
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return requestJson<AgentMemoryPayload>(`/api/agent-memory${suffix}`)
+}
+
+export function postAgentMemoryItem(payload: CreateAgentMemoryInput) {
+  return requestJson<AgentMemoryPayload['items'][number]>(
+    '/api/agent-memory',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function patchAgentMemoryItem(itemId: string, payload: UpdateAgentMemoryInput) {
+  return requestJson<AgentMemoryPayload['items'][number]>(
+    `/api/agent-memory/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function deleteAgentMemoryItem(itemId: string) {
+  return requestJson<AgentMemoryPayload>(
+    `/api/agent-memory/${encodeURIComponent(itemId)}`,
+    {
+      method: 'DELETE',
+    },
+  )
+}
+
 export function fetchPaperDetail(id: string) {
   return requestJson<PaperDetail>(`/api/papers/${encodeURIComponent(id)}`)
+}
+
+export function patchPaperLibrary(paperId: string, payload: UpdatePaperLibraryInput) {
+  return requestJson<PaperSummary>(
+    `/api/papers/${encodeURIComponent(paperId)}/library`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function fetchSearchResults(query: string, limit = 80) {
+  const params = new URLSearchParams()
+  params.set('q', query)
+  params.set('limit', String(limit))
+  return requestJson<SearchResult[]>(`/api/search?${params.toString()}`)
 }
 
 export function fetchReadingState(id: string) {
@@ -152,8 +226,106 @@ export function postPaperNote(id: string, payload: CreatePaperNoteInput) {
   )
 }
 
+export function postPaperMemoryItem(id: string, payload: CreatePaperMemoryItemInput) {
+  return requestJson<PaperMemory>(
+    `/api/papers/${encodeURIComponent(id)}/memory/items`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function postAnnotationMemoryItem(paperId: string, annotationId: string, payload: CreatePaperMemoryItemInput) {
+  return requestJson<PaperMemory>(
+    `/api/papers/${encodeURIComponent(paperId)}/annotations/${encodeURIComponent(annotationId)}/memory`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function patchPaperMemoryItem(paperId: string, itemId: string, payload: UpdatePaperMemoryItemInput) {
+  return requestJson<PaperMemory>(
+    `/api/papers/${encodeURIComponent(paperId)}/memory/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function deletePaperMemoryItem(paperId: string, itemId: string) {
+  return requestJson<PaperMemory>(
+    `/api/papers/${encodeURIComponent(paperId)}/memory/items/${encodeURIComponent(itemId)}`,
+    {
+      method: 'DELETE',
+    },
+  )
+}
+
+export function postPaperMemoryMarkdownExport(paperId: string) {
+  return requestJson<PaperMemoryMarkdownExport>(
+    `/api/papers/${encodeURIComponent(paperId)}/exports/markdown`,
+    {
+      method: 'POST',
+    },
+  )
+}
+
 export function fetchPaperAnnotations(id: string) {
   return requestJson<PaperAnnotation[]>(`/api/papers/${encodeURIComponent(id)}/annotations`)
+}
+
+export function fetchCopilotRuns(paperId: string) {
+  return requestJson<CopilotRun[]>(`/api/papers/${encodeURIComponent(paperId)}/copilot-runs`)
+}
+
+export function postCopilotRun(paperId: string, payload: CreateCopilotRunInput) {
+  return requestJson<CopilotRun>(
+    `/api/papers/${encodeURIComponent(paperId)}/copilot-runs`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function postCancelCopilotRun(paperId: string, runId: string) {
+  return requestJson<CopilotRun>(
+    `/api/papers/${encodeURIComponent(paperId)}/copilot-runs/${encodeURIComponent(runId)}/cancel`,
+    {
+      method: 'POST',
+    },
+  )
+}
+
+export function postRetryCopilotRun(paperId: string, runId: string, agentId?: string) {
+  return requestJson<CopilotRun>(
+    `/api/papers/${encodeURIComponent(paperId)}/copilot-runs/${encodeURIComponent(runId)}/retry`,
+    {
+      method: 'POST',
+      headers: agentId
+        ? {
+            'Content-Type': 'application/json',
+          }
+        : undefined,
+      body: agentId ? JSON.stringify({ agentId }) : undefined,
+    },
+  )
 }
 
 export function postPaperAnnotation(id: string, payload: CreatePaperAnnotationInput) {

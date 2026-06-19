@@ -1,4 +1,4 @@
-import { BookMarked, Copy, MessageSquarePlus, Search } from 'lucide-react'
+import { Copy, MessageSquarePlus, Search } from 'lucide-react'
 
 interface SelectionToolbarProps {
   x: number
@@ -6,10 +6,9 @@ interface SelectionToolbarProps {
   onCopy: () => void
   onSearch: () => void
   onComment: () => void
-  onNote: () => void
 }
 
-export function SelectionToolbar({ x, y, onCopy, onSearch, onComment, onNote }: SelectionToolbarProps) {
+export function SelectionToolbar({ x, y, onCopy, onSearch, onComment }: SelectionToolbarProps) {
   const actionClassName =
     'cark-button-secondary inline-flex items-center gap-2 rounded-full bg-[var(--surface-input)] px-3 py-2 text-xs'
 
@@ -30,10 +29,6 @@ export function SelectionToolbar({ x, y, onCopy, onSearch, onComment, onNote }: 
       <button type="button" onClick={onComment} className={actionClassName}>
         <MessageSquarePlus className="h-3.5 w-3.5" />
         添加评论
-      </button>
-      <button type="button" onClick={onNote} className={actionClassName}>
-        <BookMarked className="h-3.5 w-3.5" />
-        记笔记
       </button>
     </div>
   )

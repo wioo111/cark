@@ -1,4 +1,6 @@
-import type { OutlineItem, PaperSummary, PaperView } from '@/types'
+import type { OutlineItem, PaperSummary, PaperView, SearchResult } from '@/types'
+
+import { buildLocatorSearchParams, buildSearchResultLocator } from '@/utils/stableLocator'
 
 const outlinePattern = /^(#{1,6})\s+(.+)$/gm
 
@@ -139,4 +141,10 @@ export function matchesQuery(paper: PaperSummary, query: string) {
     .toLowerCase()
 
   return haystack.includes(keyword)
+}
+
+export function buildSearchResultHref(result: SearchResult) {
+  const params = buildLocatorSearchParams(buildSearchResultLocator(result))
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return `/reader/${encodeURIComponent(result.paperId)}${suffix}`
 }

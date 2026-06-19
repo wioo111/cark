@@ -10,8 +10,8 @@ import {
   fetchSettings,
   patchAnnotationComment,
   patchPaperAnnotation,
-  postAnnotationAgentComment,
   postAnnotationComment,
+  postAnnotationMemoryItem,
   postOpenAction,
   postPaperAnnotation,
   saveReadingState,
@@ -28,9 +28,25 @@ import { OutlineNav } from '@/components/OutlineNav'
 import type { MemoryNoteSeed } from '@/components/PaperMemoryPanel'
 import { SelectionToolbar } from '@/components/SelectionToolbar'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
+import { useCopilotRuns } from '@/hooks/useCopilotRuns'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
-import type { AppSettings, CreatePaperAnnotationInput, PaperAnnotation, PaperDetail, PaperView } from '@/types'
+import type {
+  AppSettings,
+  CreatePaperAnnotationInput,
+  MemoryItemType,
+  PaperAnnotation,
+  PaperBlock,
+  PaperDetail,
+  PaperView,
+} from '@/types'
 import { normalizeAnnotationText, resolveAnnotationHighlight } from '@/utils/annotationLocator'
+import {
+  activateLocatedNode,
+  buildBlockSearchTerms,
+  clearLocatorHighlights,
+  locateBlockNode,
+  normalizeLocatorText,
+} from '@/utils/blockLocator'
 import { scrollToArticleSection } from '@/utils/markdown'
 import {
   cleanBilingualMarkdown,
@@ -40,6 +56,11 @@ import {
   resolvePaperView,
 } from '@/utils/paper'
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
+import {
+  buildLocatorSearchParams,
+  buildPaperMemoryItemLocator,
+  parseLocatorFromSearchParams,
+} from '@/utils/stableLocator'
 
 const viewOptions: Array<{ key: PaperView; label: string }> = [
   { key: 'linearized', label: '原文' },
@@ -103,15 +124,24 @@ export default function ReaderPage() {
   const [savingReply, setSavingReply] = useState(false)
   const [editDraft, setEditDraft] = useState<AnnotationEditDraft | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
-  const [agentRunCounts, setAgentRunCounts] = useState<Record<string, number>>({})
+  const [memorySaveCounts, setMemorySaveCounts] = useState<Record<string, number>>({})
+  const [memorySavedAnnotationIds, setMemorySavedAnnotationIds] = useState<string[]>([])
+  const [memoryNotice, setMemoryNotice] = useState<string | null>(null)
   const [positionedAnnotations, setPositionedAnnotations] = useState<PaperAnnotation[]>([])
   const [annotationHighlights, setAnnotationHighlights] = useState<
     Array<{ annotationId: string; rects: Array<{ top: number; left: number; width: number; height: number }> }>
   >([])
   const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(null)
   const [flashAnnotationId, setFlashAnnotationId] = useState<string | null>(null)
+  const [searchHighlightRects, setSearchHighlightRects] = useState<
+    Array<{ top: number; left: number; width: number; height: number }>
+  >([])
+  const [searchHighlightTop, setSearchHighlightTop] = useState<number | null>(null)
+  const [searchHighlightHeight, setSearchHighlightHeight] = useState<number | null>(null)
+  const [flashSearchHighlight, setFlashSearchHighlight] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memorySeed, setMemorySeed] = useState<MemoryNoteSeed | null>(null)
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0)
   const articleShellRef = useRef<HTMLDivElement | null>(null)
   const articleRef = useRef<HTMLDivElement | null>(null)
   const restoredScrollRef = useRef(0)
@@ -212,7 +242,26 @@ export default function ReaderPage() {
     document.title = detail ? `${detail.title} | cark` : 'cark'
   }, [detail])
 
-  const requestedView = searchParams.get('view') as PaperView | null
+  const {
+    copilotRuns,
+    activeAgentAnnotationIds,
+    startCopilotRun,
+    cancelCopilotRun,
+    retryCopilotRun,
+  } = useCopilotRuns({
+    paperId: detail?.id ?? paperId,
+    onAnnotationsRefreshed: setAnnotations,
+  })
+
+  const requestedLocator = useMemo(() => parseLocatorFromSearchParams(searchParams), [searchParams])
+  const requestedView = requestedLocator?.view ?? null
+  const requestedAnnotationId = requestedLocator?.annotationId ?? null
+  const requestedCommentId = requestedLocator?.commentId ?? null
+  const requestedMemoryItemId = requestedLocator?.memoryItemId ?? null
+  const requestedBlockId = requestedLocator?.blockId ?? null
+  const requestedBodyQuote = requestedLocator?.quote ?? null
+  const requestedBodyContextBefore = requestedLocator?.contextBefore ?? null
+  const requestedBodyContextAfter = requestedLocator?.contextAfter ?? null
   const activeView = useMemo(
     () => resolvePaperView(detail?.availableViews ?? ['linearized'], requestedView, restoredView),
     [detail?.availableViews, requestedView, restoredView],
@@ -230,9 +279,9 @@ export default function ReaderPage() {
       ),
     [settings.copilot.agents],
   )
-  const activeAgentAnnotationIds = useMemo(
-    () => Object.entries(agentRunCounts).filter(([, count]) => count > 0).map(([annotationId]) => annotationId),
-    [agentRunCounts],
+  const memorySavingAnnotationIds = useMemo(
+    () => Object.entries(memorySaveCounts).filter(([, count]) => count > 0).map(([annotationId]) => annotationId),
+    [memorySaveCounts],
   )
 
   const markdown = useMemo(() => {
@@ -458,6 +507,33 @@ export default function ReaderPage() {
   }, [activeView, annotations, markdown])
 
   useEffect(() => {
+    const articleContainer = articleRef.current
+    const articleShell = articleShellRef.current
+    if (!articleContainer || !articleShell || !requestedBodyQuote) {
+      setSearchHighlightRects([])
+      setSearchHighlightTop(null)
+      setSearchHighlightHeight(null)
+      return
+    }
+
+    const resolved = resolveAnnotationHighlight(articleContainer, articleShell, {
+      quote: requestedBodyQuote,
+      contextBefore: requestedBodyContextBefore,
+      contextAfter: requestedBodyContextAfter,
+    })
+    if (!resolved) {
+      setSearchHighlightRects([])
+      setSearchHighlightTop(null)
+      setSearchHighlightHeight(null)
+      return
+    }
+
+    setSearchHighlightRects(resolved.rects)
+    setSearchHighlightTop(resolved.top)
+    setSearchHighlightHeight(resolved.height)
+  }, [activeView, markdown, requestedBodyContextAfter, requestedBodyContextBefore, requestedBodyQuote])
+
+  useEffect(() => {
     const articleShell = articleShellRef.current
     const targetHighlight = annotationHighlights.find((annotation) => annotation.annotationId === focusedAnnotationId)
     if (!articleShell || !focusedAnnotationId || !targetHighlight) {
@@ -483,6 +559,77 @@ export default function ReaderPage() {
       setFlashAnnotationId((current) => (current === focusedAnnotationId ? null : current))
     }
   }, [activeView, annotationHighlights, focusedAnnotationId, positionedAnnotations])
+
+  useEffect(() => {
+    const articleShell = articleShellRef.current
+    if (!articleShell || !requestedBodyQuote || searchHighlightTop === null) {
+      return
+    }
+
+    const shellRect = articleShell.getBoundingClientRect()
+    const absoluteTop = window.scrollY + shellRect.top + Math.max(searchHighlightTop - 140, 0)
+    window.scrollTo({ top: absoluteTop, behavior: 'auto' })
+    setFlashSearchHighlight(true)
+
+    const timeout = window.setTimeout(() => {
+      setFlashSearchHighlight(false)
+    }, 2200)
+
+    return () => {
+      window.clearTimeout(timeout)
+      setFlashSearchHighlight(false)
+    }
+  }, [requestedBodyQuote, searchHighlightTop])
+
+  useEffect(() => {
+    if (!requestedAnnotationId || annotations.length === 0) {
+      return
+    }
+    const target = annotations.find((annotation) => annotation.id === requestedAnnotationId)
+    if (!target) {
+      return
+    }
+    if (target.view !== activeView) {
+      setSearchParams(
+        buildLocatorSearchParams({
+          ...(requestedLocator ?? {}),
+          view: target.view,
+          annotationId: target.id,
+        }),
+        { replace: true },
+      )
+      return
+    }
+    setFocusedAnnotationId(target.id)
+  }, [activeView, annotations, requestedAnnotationId, requestedLocator, setSearchParams])
+
+  useEffect(() => {
+    if (requestedMemoryItemId) {
+      setMemoryOpen(true)
+    }
+  }, [requestedMemoryItemId])
+
+  useEffect(() => {
+    const articleContainer = articleRef.current
+    if (!articleContainer) {
+      return
+    }
+
+    clearLocatorHighlights(articleContainer)
+    if (!detail || !requestedBlockId || requestedAnnotationId || requestedBodyQuote) {
+      return
+    }
+
+    const targetBlock = detail.blocks.find((block) => block.id === requestedBlockId)
+    if (!targetBlock) {
+      return
+    }
+
+    activateLocatedNode(locateBlockNode(articleContainer, targetBlock))
+    return () => {
+      clearLocatorHighlights(articleContainer)
+    }
+  }, [detail, markdown, requestedAnnotationId, requestedBlockId, requestedBodyQuote])
 
   useEffect(() => {
     const handleWindowChange = () => {
@@ -527,7 +674,7 @@ export default function ReaderPage() {
   }
 
   function handleSelectionCapture() {
-    const nextSelection = readSelection(articleRef.current, articleShellRef.current, activeView)
+    const nextSelection = readSelection(articleRef.current, articleShellRef.current, activeView, detail?.blocks ?? [])
     setToolbarSelection(nextSelection)
   }
 
@@ -556,6 +703,7 @@ export default function ReaderPage() {
     setAnnotationError(null)
     setDraft({
       view: toolbarSelection.view,
+      blockId: toolbarSelection.blockId,
       quote: toolbarSelection.quote,
       contextBefore: toolbarSelection.contextBefore,
       contextAfter: toolbarSelection.contextAfter,
@@ -564,20 +712,6 @@ export default function ReaderPage() {
       content: '',
       mentionAgentIds: [],
     })
-    clearBrowserSelection()
-    setToolbarSelection(null)
-  }
-
-  function handleNoteStart() {
-    if (!toolbarSelection) {
-      return
-    }
-    setMemorySeed({
-      quote: toolbarSelection.quote,
-      contextBefore: toolbarSelection.contextBefore,
-      contextAfter: toolbarSelection.contextAfter,
-    })
-    setMemoryOpen(true)
     clearBrowserSelection()
     setToolbarSelection(null)
   }
@@ -607,7 +741,6 @@ export default function ReaderPage() {
 
       if (annotationId && draftSnapshot.mentionAgentIds.length > 0) {
         void invokeMentionedAgents(
-          detail.id,
           annotationId,
           draftSnapshot.mentionAgentIds,
           userMessage,
@@ -661,7 +794,6 @@ export default function ReaderPage() {
 
       if (replySnapshot.mentionAgentIds.length > 0) {
         void invokeMentionedAgents(
-          detail.id,
           replySnapshot.annotationId,
           replySnapshot.mentionAgentIds,
           userMessage,
@@ -768,8 +900,42 @@ export default function ReaderPage() {
     }
   }
 
+  async function handleCreateMemoryFromAnnotation(annotation: PaperAnnotation) {
+    if (!detail || (memorySaveCounts[annotation.id] ?? 0) > 0) {
+      return
+    }
+
+    const text = buildMemoryTextFromAnnotation(annotation)
+    if (!text) {
+      setAnnotationError('这条批注没有可沉淀的内容')
+      return
+    }
+
+    updateMemorySaveCount(annotation.id, 1)
+    setAnnotationError(null)
+    try {
+      await postAnnotationMemoryItem(detail.id, annotation.id, {
+        type: inferMemoryItemType(text),
+        text,
+        quote: annotation.quote,
+        tags: ['annotation'],
+      })
+      setMemoryRefreshKey((current) => current + 1)
+      setMemoryOpen(true)
+      setMemoryNotice('已沉淀到论文记忆')
+      setMemorySavedAnnotationIds((current) => (current.includes(annotation.id) ? current : [...current, annotation.id]))
+      window.setTimeout(() => {
+        setMemorySavedAnnotationIds((current) => current.filter((id) => id !== annotation.id))
+        setMemoryNotice(null)
+      }, 2600)
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError('沉淀到论文记忆失败', saveError))
+    } finally {
+      updateMemorySaveCount(annotation.id, -1)
+    }
+  }
+
   async function invokeMentionedAgents(
-    paperIdValue: string,
     annotationId: string,
     agentIds: string[],
     userMessage: string,
@@ -781,27 +947,35 @@ export default function ReaderPage() {
       return initialAnnotations
     }
 
-    let nextAnnotations = initialAnnotations
-    updateAgentRunCount(annotationId, 1)
-    try {
-      for (const agentId of agentIds) {
-        nextAnnotations = await postAnnotationAgentComment(paperIdValue, {
-          agentId,
-          annotationId,
-          userMessage,
-          followUpCommentId: !followUpCommentId || !followUpAgentId || followUpAgentId === agentId ? followUpCommentId : undefined,
-        })
-        setAnnotations(nextAnnotations)
-        setFocusedAnnotationId(annotationId)
-      }
-    } finally {
-      updateAgentRunCount(annotationId, -1)
-    }
-    return nextAnnotations
+    await startCopilotRun({
+      annotationId,
+      agentIds,
+      userMessage,
+      followUpCommentId,
+      followUpAgentId,
+    })
+    setFocusedAnnotationId(annotationId)
+    return initialAnnotations
   }
 
-  function updateAgentRunCount(annotationId: string, delta: number) {
-    setAgentRunCounts((current) => {
+  async function handleCancelCopilotRun(runId: string) {
+    try {
+      await cancelCopilotRun(runId)
+    } catch (cancelError) {
+      setAnnotationError(formatAnnotationError('取消共读任务失败', cancelError))
+    }
+  }
+
+  async function handleRetryCopilotRun(runId: string, agentId?: string) {
+    try {
+      await retryCopilotRun(runId, agentId)
+    } catch (retryError) {
+      setAnnotationError(formatAnnotationError('重试共读任务失败', retryError))
+    }
+  }
+
+  function updateMemorySaveCount(annotationId: string, delta: number) {
+    setMemorySaveCounts((current) => {
       const nextCount = Math.max((current[annotationId] ?? 0) + delta, 0)
       if (nextCount === 0) {
         const { [annotationId]: _removed, ...rest } = current
@@ -877,6 +1051,13 @@ export default function ReaderPage() {
           >
             <X className="h-4 w-4" />
           </button>
+        </div>
+      ) : null}
+
+      {memoryNotice ? (
+        <div className="fixed right-4 top-4 z-[69] flex max-w-[420px] items-center gap-3 rounded-[20px] border border-emerald-300/25 bg-[#10251b]/95 px-4 py-3 text-sm text-emerald-100 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur">
+          <BookMarked className="h-4 w-4 shrink-0" />
+          <span>{memoryNotice}</span>
         </div>
       ) : null}
 
@@ -973,6 +1154,28 @@ export default function ReaderPage() {
               </h2>
             </div>
             <div className="pointer-events-none absolute inset-0 z-10">
+              {(searchHighlightRects.length > 0
+                ? searchHighlightRects
+                : searchHighlightTop !== null && searchHighlightHeight !== null
+                  ? [{ top: searchHighlightTop, left: 24, width: Math.max((articleShellRef.current?.clientWidth ?? 96) - 48, 48), height: searchHighlightHeight }]
+                  : []
+              ).map((rect, index) => (
+                <div
+                  key={`search-highlight-${index}`}
+                  className={[
+                    'absolute rounded-[10px] transition-all',
+                    flashSearchHighlight
+                      ? 'bg-[rgba(var(--accent-rgb),0.16)] shadow-[0_0_22px_rgba(var(--accent-rgb),0.24)]'
+                      : 'bg-[rgba(var(--accent-rgb),0.1)]',
+                  ].join(' ')}
+                  style={{
+                    top: `${rect.top}px`,
+                    left: `${rect.left}px`,
+                    width: `${rect.width}px`,
+                    height: `${Math.max(rect.height, 24)}px`,
+                  }}
+                />
+              ))}
               {annotationHighlights
                 .filter((item) => positionedAnnotations.find((annotation) => annotation.id === item.annotationId)?.view === activeView)
                 .flatMap((item) =>
@@ -1010,9 +1213,13 @@ export default function ReaderPage() {
           <CommentLane
             annotations={positionedAnnotations}
             activeView={activeView}
+            focusCommentId={requestedCommentId}
             laneHeight={laneHeight}
             agents={availableAgents}
             activeAgentAnnotationIds={activeAgentAnnotationIds}
+            copilotRuns={copilotRuns}
+            memorySavingAnnotationIds={memorySavingAnnotationIds}
+            memorySavedAnnotationIds={memorySavedAnnotationIds}
             draft={draft}
             savingDraft={savingDraft}
             replyDraft={replyDraft}
@@ -1029,12 +1236,15 @@ export default function ReaderPage() {
             onReplyCancel={() => setReplyDraft(null)}
             onReplySubmit={() => void handleReplySubmit()}
             onReplyAgentToggle={handleReplyAgentToggle}
+            onCancelCopilotRun={(runId) => void handleCancelCopilotRun(runId)}
+            onRetryCopilotRun={(runId, agentId) => void handleRetryCopilotRun(runId, agentId)}
             onEditStart={(annotationId, comment) => handleEditStart(annotationId, comment.id, comment.content)}
             onEditChange={(value) => setEditDraft((current) => (current ? { ...current, content: value } : current))}
             onEditCancel={() => setEditDraft(null)}
             onEditSubmit={() => void handleEditSubmit()}
             onArchiveToggle={(annotationId, nextArchived) => void handleArchiveToggle(annotationId, nextArchived)}
             onDeleteAnnotation={(annotationId) => void handleDeleteAnnotation(annotationId)}
+            onCreateMemoryFromAnnotation={(annotation) => void handleCreateMemoryFromAnnotation(annotation)}
           />
         </section>
       </div>
@@ -1046,7 +1256,6 @@ export default function ReaderPage() {
           onCopy={() => void handleCopySelection()}
           onSearch={handleSearchSelection}
           onComment={handleDraftStart}
-          onNote={handleNoteStart}
         />
       ) : null}
 
@@ -1057,8 +1266,14 @@ export default function ReaderPage() {
             paperId={detail.id}
             paperTitle={detail.title}
             seed={memorySeed}
+            focusItemId={requestedMemoryItemId}
+            refreshKey={memoryRefreshKey}
             onClose={() => setMemoryOpen(false)}
             onSeedConsumed={() => setMemorySeed(null)}
+            onLocateItem={(item) => {
+              setMemoryOpen(false)
+              setSearchParams(buildLocatorSearchParams(buildPaperMemoryItemLocator(item)))
+            }}
           />
         </Suspense>
       ) : null}
@@ -1068,6 +1283,7 @@ export default function ReaderPage() {
 
 interface SelectionToolbarState {
   view: PaperView
+  blockId?: string | null
   quote: string
   contextBefore?: string | null
   contextAfter?: string | null
@@ -1081,6 +1297,7 @@ function readSelection(
   articleContainer: HTMLDivElement | null,
   articleShell: HTMLDivElement | null,
   activeView: PaperView,
+  blocks: PaperBlock[],
 ): SelectionToolbarState | null {
   if (!articleContainer || !articleShell) {
     return null
@@ -1110,11 +1327,13 @@ function readSelection(
   const shellRect = articleShell.getBoundingClientRect()
   const anchorElement = findSelectionAnchorElement(commonNode, articleContainer)
   const anchorSource = normalizeWhitespace(anchorElement?.innerText || anchorElement?.textContent || quote)
+  const blockId = resolveSelectionBlockId(anchorElement, blocks)
   const normalizedQuote = normalizeWhitespace(quote)
   const quoteIndex = anchorSource.indexOf(normalizedQuote)
   const contextWindow = Math.min(Math.max(quote.length < 120 ? 36 : 52, 24), 52)
   return {
     view: activeView,
+    blockId,
     quote: quote.slice(0, 600),
     contextBefore: quoteIndex >= 0 ? anchorSource.slice(Math.max(0, quoteIndex - contextWindow), quoteIndex) : null,
     contextAfter:
@@ -1168,11 +1387,15 @@ function findSelectionAnchorElement(node: Node, articleContainer: HTMLElement) {
 }
 
 function buildAnnotationPayload(
-  value: Pick<SelectionToolbarState, 'view' | 'quote' | 'contextBefore' | 'contextAfter' | 'anchorTop' | 'anchorHeight'>,
+  value: Pick<
+    SelectionToolbarState,
+    'view' | 'blockId' | 'quote' | 'contextBefore' | 'contextAfter' | 'anchorTop' | 'anchorHeight'
+  >,
   initialComment: CreatePaperAnnotationInput['initialComment'],
 ): CreatePaperAnnotationInput {
   return {
     view: value.view,
+    blockId: value.blockId ?? null,
     quote: value.quote,
     contextBefore: value.contextBefore ?? null,
     contextAfter: value.contextAfter ?? null,
@@ -1185,7 +1408,10 @@ function buildAnnotationPayload(
 async function upsertAnnotationComment(
   paperId: string,
   annotations: PaperAnnotation[],
-  value: Pick<SelectionToolbarState, 'view' | 'quote' | 'contextBefore' | 'contextAfter' | 'anchorTop' | 'anchorHeight'>,
+  value: Pick<
+    SelectionToolbarState,
+    'view' | 'blockId' | 'quote' | 'contextBefore' | 'contextAfter' | 'anchorTop' | 'anchorHeight'
+  >,
   initialComment: CreatePaperAnnotationInput['initialComment'],
 ) {
   const existingId = findExistingAnnotationId(annotations, value)
@@ -1222,6 +1448,57 @@ function findExistingAnnotationId(
   }
 
   return null
+}
+
+function buildMemoryTextFromAnnotation(annotation: PaperAnnotation) {
+  const userComments = annotation.comments
+    .filter((comment) => comment.authorType === 'user')
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  const latestUserComment = userComments.at(-1)
+  const commentText = latestUserComment?.content.trim()
+  if (commentText) {
+    return commentText
+  }
+  return annotation.quote.trim()
+}
+
+function inferMemoryItemType(text: string): MemoryItemType {
+  return /[?？]\s*$/.test(text.trim()) ? 'question' : 'insight'
+}
+
+function resolveSelectionBlockId(anchorElement: HTMLElement | null, blocks: PaperBlock[]) {
+  const normalizedAnchor = normalizeLocatorText(anchorElement?.innerText || anchorElement?.textContent || '')
+  if (!normalizedAnchor) {
+    return null
+  }
+
+  let bestMatch: { blockId: string; score: number } | null = null
+  for (const block of blocks) {
+    const score = buildBlockSearchTerms(block)
+      .map(normalizeLocatorText)
+      .reduce((bestScore, term) => Math.max(bestScore, scoreBlockCandidate(normalizedAnchor, term)), 0)
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { blockId: block.id, score }
+    }
+  }
+
+  return bestMatch && bestMatch.score > 0 ? bestMatch.blockId : null
+}
+
+function scoreBlockCandidate(anchorText: string, term: string) {
+  if (!term) {
+    return 0
+  }
+  if (anchorText === term) {
+    return 1200 - term.length
+  }
+  if (anchorText.includes(term)) {
+    return 900 - Math.max(0, anchorText.length - term.length)
+  }
+  if (term.includes(anchorText) && anchorText.length > 18) {
+    return 700 - Math.max(0, term.length - anchorText.length)
+  }
+  return 0
 }
 
 function formatAnnotationError(prefix: string, error: unknown) {

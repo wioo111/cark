@@ -24,6 +24,13 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
+import gui_memory
+import gui_library
+import gui_copilot_runs
+import gui_agent_memory
+import gui_locator
+import gui_search
+import gui_exports
 from gui_storage import SingleInstanceLock, WorkbenchStore, format_task_command
 from process_utils import is_process_alive
 from zotero_client import (
@@ -58,6 +65,7 @@ PROXY_ENV_KEYS = (
 STORE = WorkbenchStore(DATABASE_PATH)
 SERVER_INSTANCE_ID = f"{os.getpid()}-{uuid.uuid4().hex}"
 ZOTERO_IMPORT_LOCK = threading.Lock()
+COPILOT_RUN_TIMEOUT_SECONDS = 180
 
 
 @dataclass
@@ -141,17 +149,11 @@ def normalize_string_list(value, *, limit: int = 8) -> list[str]:
 
 
 def write_json_file(path: Path, payload):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    gui_memory.write_json_file(path, payload)
 
 
 def load_json_object(path: Path) -> dict[str, object]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    payload = gui_memory.read_json_file(path, default={})
     return payload if isinstance(payload, dict) else {}
 
 
@@ -1064,10 +1066,21 @@ def deserialize_paper_record(payload: dict[str, object]) -> Optional[PaperRecord
 
 def sync_paper_index(store: WorkbenchStore = STORE):
     discovered = discover_records()
+    indexed_at = current_timestamp_iso()
     store.sync_papers(
         [serialize_paper_record(record) for record in discovered.values()],
-        current_timestamp_iso(),
+        indexed_at,
     )
+    if hasattr(store, "replace_search_entries"):
+        store.replace_search_entries(
+            gui_search.build_search_index(
+                discovered.values(),
+                memory_root=MEMORY_ROOT_DIR,
+                load_markdown=load_markdown,
+                load_annotations=load_paper_annotations,
+            ),
+            indexed_at,
+        )
 
 
 def indexed_records(*, refresh: bool = False) -> dict[str, PaperRecord]:
@@ -1113,22 +1126,35 @@ def get_record(paper_id: str) -> PaperRecord:
     raise FileNotFoundError("未找到指定论文")
 
 
+def build_paper_summary(record: PaperRecord) -> dict[str, object]:
+    has_images = (record.auto_dir / "images").exists()
+    reading_state = STORE.get_reading_state(record.paper_id)
+    library_meta = gui_library.load_library_meta(record, MEMORY_ROOT_DIR, reading_state=reading_state)
+    annotations = load_paper_annotations(record)
+    memory_items = gui_memory.load_memory_items(record, MEMORY_ROOT_DIR)
+    return {
+        "id": record.paper_id,
+        "title": record.title,
+        "taskId": record.task_id,
+        "updatedAt": datetime.fromtimestamp(record.updated_at).isoformat(),
+        "availableViews": record.available_views,
+        "hasImages": has_images,
+        "sourcePdf": record.source_pdf,
+        "favorite": library_meta["favorite"],
+        "tags": library_meta["tags"],
+        "readingStatus": library_meta["readingStatus"],
+        "annotationCount": len(annotations),
+        "memoryCount": len(memory_items),
+        "lastReadAt": library_meta["lastReadAt"],
+        "libraryUpdatedAt": library_meta["libraryUpdatedAt"],
+    }
+
+
 def list_papers() -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
-    for record in sorted(indexed_records(refresh=True).values(), key=lambda item: item.updated_at, reverse=True):
-        has_images = (record.auto_dir / "images").exists()
-        items.append(
-            {
-                "id": record.paper_id,
-                "title": record.title,
-                "taskId": record.task_id,
-                "updatedAt": datetime.fromtimestamp(record.updated_at).isoformat(),
-                "availableViews": record.available_views,
-                "hasImages": has_images,
-                "sourcePdf": record.source_pdf,
-            }
-        )
-    return items
+    return [
+        build_paper_summary(record)
+        for record in sorted(indexed_records(refresh=True).values(), key=lambda item: item.updated_at, reverse=True)
+    ]
 
 
 def load_markdown(path: Optional[Path]) -> Optional[str]:
@@ -1284,7 +1310,7 @@ def build_detail(record: PaperRecord) -> dict[str, object]:
 
 
 def paper_memory_dir(record: PaperRecord) -> Path:
-    return MEMORY_ROOT_DIR / "papers" / record.paper_id
+    return MEMORY_ROOT_DIR / "papers" / gui_memory.paper_memory_key(record)
 
 
 def paper_profile_path(record: PaperRecord) -> Path:
@@ -1322,6 +1348,7 @@ def default_memory_profile(record: PaperRecord) -> dict[str, object]:
 
 
 def ensure_paper_memory(record: PaperRecord):
+    gui_memory.migrate_legacy_paper_memory(record, MEMORY_ROOT_DIR)
     paper_memory_dir(record).mkdir(parents=True, exist_ok=True)
     paper_notes_dir(record).mkdir(parents=True, exist_ok=True)
     paper_annotations_dir(record).mkdir(parents=True, exist_ok=True)
@@ -1403,7 +1430,11 @@ def annotation_preview(content: str, *, limit: int = 72) -> str:
     return f"{cleaned[:limit].rstrip()}..."
 
 
-def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object]:
+def normalize_annotation_comment(
+    payload: dict[str, object],
+    *,
+    locator: dict[str, object] | None = None,
+) -> dict[str, object]:
     author_type = payload.get("authorType")
     if author_type not in {"user", "agent"}:
         raise ValueError("评论作者类型非法")
@@ -1424,6 +1455,7 @@ def normalize_annotation_comment(payload: dict[str, object]) -> dict[str, object
         "replyToCommentId": str(payload.get("replyToCommentId") or "").strip() or None,
         "replyToAgentId": str(payload.get("replyToAgentId") or "").strip() or None,
         "contextChunkIds": normalize_string_list(payload.get("contextChunkIds"), limit=8) if author_type == "agent" else [],
+        "locator": gui_locator.normalize_locator(locator),
         "content": content.strip(),
         "preview": annotation_preview(content.strip()),
         "createdAt": timestamp,
@@ -1729,11 +1761,30 @@ def build_agent_messages(
     follow_up_content = str(follow_up_comment.get("content") or "").strip() if isinstance(follow_up_comment, dict) else ""
     conversation_context = build_annotation_conversation_context(annotation, str(agent.get("id") or "").strip())
     active_relevant_chunks = relevant_chunks or resolve_agent_relevant_chunks(active_context_cache, annotation, user_message, follow_up_comment)
+    agent_memory_query = "\n".join(
+        part
+        for part in (
+            record.title,
+            str(annotation.get("quote") or "").strip(),
+            context_before,
+            context_after,
+            conversation_context,
+            follow_up_content,
+            user_message.strip(),
+        )
+        if part
+    )
+    agent_memory_context = gui_agent_memory.render_agent_memory_context(
+        MEMORY_ROOT_DIR,
+        agent_memory_query,
+        limit=8,
+    )
     shared_context = "\n\n".join(
         part
         for part in (
             f"论文标题：{record.title}",
             f"当前阅读视图：{'译文版本' if view == 'bilingual' else '原文'}",
+            "以下是长期全局记忆，优先用于理解用户偏好、研究方向和项目上下文；不要机械复述：\n\n" + agent_memory_context if agent_memory_context else "",
             "以下是论文的本地结构摘要，请先建立整体理解：\n\n" + str(active_context_cache.get("overview") or "").strip(),
             "以下是当前线程优先复用并补充后的相关正文片段：\n\n" + render_relevant_chunks(active_relevant_chunks) if active_relevant_chunks else "",
         )
@@ -1860,7 +1911,7 @@ def resolve_latest_user_comment_for_agent(annotation: dict[str, object], agent_i
     return None
 
 
-def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object]):
+def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object], should_cancel=None):
     agent_id = payload.get("agentId")
     if not isinstance(agent_id, str) or not agent_id.strip():
         raise ValueError("缺少智能体标识")
@@ -1898,6 +1949,9 @@ def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object]):
         if not target_agent_id and target_author_label and target_author_label != current_agent_name:
             raise ValueError("追问目标与当前智能体不一致")
 
+    if should_cancel and should_cancel():
+        raise RuntimeError("共读任务已取消")
+
     context_cache = load_copilot_context_cache(record, str(annotation.get("view") or "linearized"))
     relevant_chunks = resolve_agent_relevant_chunks(context_cache, annotation, user_message, follow_up_comment)
     content = request_copilot_completion(
@@ -1912,6 +1966,9 @@ def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object]):
             relevant_chunks,
         ),
     )
+    if should_cancel and should_cancel():
+        raise RuntimeError("共读任务已取消")
+
     trigger_user_comment = resolve_latest_user_comment_for_agent(annotation, agent_id.strip())
     comment_payload = {
         "authorType": "agent",
@@ -1928,15 +1985,163 @@ def invoke_annotation_agent(record: PaperRecord, payload: dict[str, object]):
     }
 
     if isinstance(annotation_id, str) and annotation_id.strip():
-        append_annotation_comment(record, annotation_id.strip(), comment_payload)
+        return append_annotation_comment(record, annotation_id.strip(), comment_payload)
     else:
-        create_annotation(
+        annotation = create_annotation(
             record,
             {
                 **annotation,
                 "initialComment": comment_payload,
             },
         )
+        return annotation["comments"][0]
+
+
+def resolve_copilot_agents_for_run(payload: dict[str, object]) -> list[dict[str, object]]:
+    raw_agent_ids = normalize_string_list(payload.get("agentIds"), limit=8)
+    if not raw_agent_ids and isinstance(payload.get("agentId"), str):
+        raw_agent_ids = [str(payload.get("agentId") or "").strip()]
+    agent_ids: list[str] = []
+    for agent_id in raw_agent_ids:
+        if agent_id and agent_id not in agent_ids:
+            agent_ids.append(agent_id)
+    if not agent_ids:
+        raise ValueError("缺少智能体标识")
+
+    settings = load_gui_settings()
+    return [resolve_copilot_agent(settings, agent_id) for agent_id in agent_ids]
+
+
+def create_copilot_run(record: PaperRecord, payload: dict[str, object]) -> dict[str, object]:
+    agents = resolve_copilot_agents_for_run(payload)
+    run = gui_copilot_runs.create_run(record, MEMORY_ROOT_DIR, payload, agents)
+    spawn_copilot_run_worker(record.paper_id, str(run["runId"]))
+    return run
+
+
+def retry_copilot_run(record: PaperRecord, run_id: str, agent_id: str | None = None) -> dict[str, object]:
+    run = gui_copilot_runs.prepare_retry(record, MEMORY_ROOT_DIR, run_id, agent_id)
+    spawn_copilot_run_worker(record.paper_id, str(run["runId"]))
+    return run
+
+
+def spawn_copilot_run_worker(paper_id: str, run_id: str):
+    thread = threading.Thread(
+        target=execute_copilot_run,
+        args=(paper_id, run_id),
+        daemon=True,
+        name=f"cark-copilot-run-{run_id}",
+    )
+    thread.start()
+
+
+def execute_copilot_run(paper_id: str, run_id: str):
+    try:
+        record = get_record(paper_id)
+    except FileNotFoundError:
+        return
+
+    try:
+        run = gui_copilot_runs.mark_run_running(record, MEMORY_ROOT_DIR, run_id)
+    except FileNotFoundError:
+        return
+
+    annotation_id = str(run.get("annotationId") or "").strip()
+    user_message = str(run.get("userMessage") or "").strip()
+    follow_up_comment_id = str(run.get("followUpCommentId") or "").strip() or None
+    follow_up_agent_id = str(run.get("followUpAgentId") or "").strip() or None
+
+    for agent_run in gui_copilot_runs.normalize_agent_runs(run.get("agents")):
+        agent_id = str(agent_run.get("agentId") or "").strip()
+        if not agent_id:
+            continue
+        try:
+            latest_run = gui_copilot_runs.load_run(record, MEMORY_ROOT_DIR, run_id)
+        except FileNotFoundError:
+            return
+        if latest_run.get("status") == "canceled":
+            return
+        latest_agent = next(
+            (
+                item
+                for item in gui_copilot_runs.normalize_agent_runs(latest_run.get("agents"))
+                if item.get("agentId") == agent_id
+            ),
+            None,
+        )
+        if not latest_agent or latest_agent.get("status") == "done":
+            continue
+        if latest_agent.get("status") not in {"queued", "running", "failed", "canceled"}:
+            continue
+
+        try:
+            gui_copilot_runs.mark_agent_running(record, MEMORY_ROOT_DIR, run_id, agent_id)
+            comment = invoke_annotation_agent(
+                record,
+                {
+                    "agentId": agent_id,
+                    "annotationId": annotation_id,
+                    "userMessage": user_message,
+                    "followUpCommentId": (
+                        follow_up_comment_id
+                        if follow_up_comment_id and (not follow_up_agent_id or follow_up_agent_id == agent_id)
+                        else None
+                    ),
+                },
+                should_cancel=lambda: gui_copilot_runs.is_canceled(record, MEMORY_ROOT_DIR, run_id),
+            )
+            comment_id = str(comment.get("id") or "").strip() if isinstance(comment, dict) else None
+            gui_copilot_runs.mark_agent_done(record, MEMORY_ROOT_DIR, run_id, agent_id, comment_id)
+        except Exception as error:
+            if gui_copilot_runs.is_canceled(record, MEMORY_ROOT_DIR, run_id):
+                return
+            gui_copilot_runs.mark_agent_failed(record, MEMORY_ROOT_DIR, run_id, agent_id, str(error))
+
+
+def resume_active_copilot_runs() -> dict[str, int]:
+    resumed_count = 0
+    expired_count = 0
+    for record in indexed_records(refresh=True).values():
+        expired_count += gui_copilot_runs.expire_stale_active_runs(
+            record,
+            MEMORY_ROOT_DIR,
+            timeout_seconds=COPILOT_RUN_TIMEOUT_SECONDS,
+        )
+        for run in gui_copilot_runs.list_active_runs(record, MEMORY_ROOT_DIR):
+            run_id = str(run.get("runId") or "").strip()
+            if not run_id:
+                continue
+            resumed = gui_copilot_runs.prepare_resume(record, MEMORY_ROOT_DIR, run_id)
+            if resumed.get("status") in {"queued", "running"}:
+                spawn_copilot_run_worker(record.paper_id, run_id)
+                resumed_count += 1
+    return {"resumed": resumed_count, "expired": expired_count}
+
+
+def normalize_annotation_thread(payload: dict[str, object]) -> dict[str, object]:
+    annotation = dict(payload)
+    annotation_locator = gui_locator.normalize_locator(
+        annotation.get("locator"),
+        default=gui_locator.build_annotation_locator(annotation),
+    )
+    annotation["locator"] = annotation_locator
+    comments = annotation.get("comments")
+    if isinstance(comments, list):
+        normalized_comments: list[dict[str, object]] = []
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            comment_payload = dict(comment)
+            comment_id = str(comment_payload.get("id") or "").strip() or None
+            comment_payload["locator"] = gui_locator.normalize_locator(
+                comment_payload.get("locator"),
+                default=gui_locator.build_annotation_locator(annotation, comment_id=comment_id),
+            )
+            normalized_comments.append(comment_payload)
+        annotation["comments"] = normalized_comments
+    else:
+        annotation["comments"] = []
+    return annotation
 
 
 def load_paper_annotations(record: PaperRecord) -> list[dict[str, object]]:
@@ -1948,7 +2153,7 @@ def load_paper_annotations(record: PaperRecord) -> list[dict[str, object]]:
         except Exception:
             continue
         if isinstance(payload, dict):
-            items.append(payload)
+            items.append(normalize_annotation_thread(payload))
     items.sort(key=lambda item: (float(item.get("anchorTop") or 0), str(item.get("createdAt") or "")))
     return items
 
@@ -1960,13 +2165,14 @@ def annotation_file_path(record: PaperRecord, annotation_id: str) -> Path:
 
 
 def load_annotation(record: PaperRecord, annotation_id: str) -> tuple[Path, dict[str, object]]:
+    ensure_paper_memory(record)
     file_path = annotation_file_path(record, annotation_id)
     if not file_path.exists():
         raise FileNotFoundError("未找到指定批注线程")
     payload = json.loads(file_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise FileNotFoundError("批注线程损坏")
-    return file_path, payload
+    return file_path, normalize_annotation_thread(payload)
 
 
 def create_annotation(record: PaperRecord, payload: dict[str, object]):
@@ -1987,6 +2193,14 @@ def create_annotation(record: PaperRecord, payload: dict[str, object]):
     ensure_paper_memory(record)
     timestamp = current_timestamp_iso()
     annotation_id = f"annotation-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    annotation_locator = gui_locator.build_locator(
+        view=view,
+        annotation_id=annotation_id,
+        block_id=payload.get("blockId"),
+        quote=quote.strip()[:600],
+        context_before=payload.get("contextBefore"),
+        context_after=payload.get("contextAfter"),
+    )
     annotation = {
         "id": annotation_id,
         "paperId": record.paper_id,
@@ -1996,14 +2210,17 @@ def create_annotation(record: PaperRecord, payload: dict[str, object]):
         "contextAfter": payload.get("contextAfter") if isinstance(payload.get("contextAfter"), str) else None,
         "anchorTop": max(float(anchor_top), 0.0),
         "anchorHeight": max(float(anchor_height), 24.0),
+        "blockId": str(payload.get("blockId") or "").strip() or None,
+        "locator": annotation_locator,
         "createdAt": timestamp,
         "updatedAt": timestamp,
         "archived": False,
         "archivedAt": None,
-        "comments": [normalize_annotation_comment(initial_comment)],
+        "comments": [normalize_annotation_comment(initial_comment, locator=annotation_locator)],
     }
+    annotation["comments"][0]["locator"] = gui_locator.build_annotation_locator(annotation, comment_id=annotation["comments"][0]["id"])
     write_json_file(annotation_file_path(record, annotation_id), annotation)
-    return annotation
+    return normalize_annotation_thread(annotation)
 
 
 def append_annotation_comment(record: PaperRecord, annotation_id: str, payload: dict[str, object]):
@@ -2011,12 +2228,19 @@ def append_annotation_comment(record: PaperRecord, annotation_id: str, payload: 
     comments = annotation.get("comments")
     if not isinstance(comments, list):
         comments = []
-    comments.append(normalize_annotation_comment(payload))
+    comment = normalize_annotation_comment(payload, locator=gui_locator.build_annotation_locator(annotation))
+    comment["locator"] = gui_locator.build_annotation_locator(annotation, comment_id=comment["id"])
+    comments.append(comment)
     annotation["comments"] = comments
     annotation["updatedAt"] = current_timestamp_iso()
     annotation["archived"] = False
     annotation["archivedAt"] = None
+    annotation["locator"] = gui_locator.normalize_locator(
+        annotation.get("locator"),
+        default=gui_locator.build_annotation_locator(annotation),
+    )
     write_json_file(file_path, annotation)
+    return comment
 
 
 def update_annotation_comment(record: PaperRecord, annotation_id: str, comment_id: str, payload: dict[str, object]):
@@ -2033,11 +2257,19 @@ def update_annotation_comment(record: PaperRecord, annotation_id: str, comment_i
             comment["content"] = content.strip()
             comment["preview"] = annotation_preview(content.strip())
             comment["updatedAt"] = current_timestamp_iso()
+            comment["locator"] = gui_locator.normalize_locator(
+                comment.get("locator"),
+                default=gui_locator.build_annotation_locator(annotation, comment_id=comment_id),
+            )
             found = True
             break
     if not found:
         raise FileNotFoundError("未找到指定评论")
     annotation["updatedAt"] = current_timestamp_iso()
+    annotation["locator"] = gui_locator.normalize_locator(
+        annotation.get("locator"),
+        default=gui_locator.build_annotation_locator(annotation),
+    )
     write_json_file(file_path, annotation)
 
 
@@ -2050,6 +2282,19 @@ def update_annotation(record: PaperRecord, annotation_id: str, payload: dict[str
         annotation["archived"] = archived
         annotation["archivedAt"] = current_timestamp_iso() if archived else None
         annotation["updatedAt"] = current_timestamp_iso()
+    annotation["locator"] = gui_locator.normalize_locator(
+        annotation.get("locator"),
+        default=gui_locator.build_annotation_locator(annotation),
+    )
+    comments = annotation.get("comments")
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict):
+                comment_id = str(comment.get("id") or "").strip() or None
+                comment["locator"] = gui_locator.normalize_locator(
+                    comment.get("locator"),
+                    default=gui_locator.build_annotation_locator(annotation, comment_id=comment_id),
+                )
     write_json_file(file_path, annotation)
 
 
@@ -2146,6 +2391,10 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/tasks":
             return self.write_json(list_tasks_payload())
 
+        if parsed.path == "/api/agent-memory":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            return self.write_json(gui_agent_memory.build_agent_memory_payload(MEMORY_ROOT_DIR, query=query))
+
         if parsed.path == "/api/zotero/status":
             return self.write_json(zotero_status())
 
@@ -2167,8 +2416,29 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/papers":
             return self.write_json(list_papers())
 
+        if parsed.path == "/api/search":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            limit_value = parse_qs(parsed.query).get("limit", ["80"])[0]
+            try:
+                limit = int(limit_value)
+            except (TypeError, ValueError):
+                limit = 80
+            records = sorted(indexed_records(refresh=True).values(), key=lambda item: item.updated_at, reverse=True)
+            return self.write_json(
+                gui_search.search_records(
+                    records,
+                    query,
+                    memory_root=MEMORY_ROOT_DIR,
+                    load_markdown=load_markdown,
+                    load_annotations=load_paper_annotations,
+                    search_store=STORE,
+                    limit=limit,
+                )
+            )
+
         if parsed.path in {"/favicon.ico", "/favicon.svg"}:
-            self.send_response(HTTPStatus.NOT_FOUND)
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return
 
@@ -2198,7 +2468,18 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                     }
                 return self.write_json(state)
             if remainder == "/memory":
-                return self.write_json(build_memory_payload(record))
+                return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
+            if remainder == "/copilot-runs":
+                gui_copilot_runs.expire_stale_active_runs(
+                    record,
+                    MEMORY_ROOT_DIR,
+                    timeout_seconds=COPILOT_RUN_TIMEOUT_SECONDS,
+                )
+                annotation_filter = parse_qs(parsed.query).get("annotationId", [None])[0]
+                runs = gui_copilot_runs.list_runs(record, MEMORY_ROOT_DIR)
+                if annotation_filter:
+                    runs = [run for run in runs if run.get("annotationId") == annotation_filter]
+                return self.write_json(runs)
 
         if parsed.path.startswith("/api/media/"):
             paper_id = unquote(parsed.path.removeprefix("/api/media/"))
@@ -2226,6 +2507,14 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/settings":
             payload = self.read_json_body()
             return self.write_json(save_gui_settings(payload))
+
+        if parsed.path == "/api/agent-memory":
+            payload = self.read_json_body()
+            try:
+                item = gui_agent_memory.create_agent_memory_item(MEMORY_ROOT_DIR, payload)
+                return self.write_json(item, status=HTTPStatus.CREATED)
+            except ValueError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
 
         if parsed.path == "/api/settings/test":
             payload = self.read_json_body()
@@ -2306,13 +2595,35 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 if remainder == "/annotations/agent-comment":
                     invoke_annotation_agent(record, payload)
                     return self.write_json(load_paper_annotations(record))
+                if remainder == "/copilot-runs":
+                    return self.write_json(create_copilot_run(record, payload), status=HTTPStatus.ACCEPTED)
+                if remainder.startswith("/copilot-runs/") and remainder.endswith("/cancel"):
+                    run_id = remainder.removeprefix("/copilot-runs/").removesuffix("/cancel").strip("/")
+                    return self.write_json(gui_copilot_runs.cancel_run(record, MEMORY_ROOT_DIR, run_id))
+                if remainder.startswith("/copilot-runs/") and remainder.endswith("/retry"):
+                    run_id = remainder.removeprefix("/copilot-runs/").removesuffix("/retry").strip("/")
+                    agent_id = payload.get("agentId") if isinstance(payload.get("agentId"), str) else None
+                    return self.write_json(retry_copilot_run(record, run_id, agent_id), status=HTTPStatus.ACCEPTED)
+                if remainder == "/exports/markdown":
+                    return self.write_json(
+                        gui_exports.export_paper_memory_markdown(record, MEMORY_ROOT_DIR),
+                        status=HTTPStatus.CREATED,
+                    )
+                if remainder.startswith("/annotations/") and remainder.endswith("/memory"):
+                    annotation_id = remainder.removeprefix("/annotations/").removesuffix("/memory").strip("/")
+                    _annotation_path, annotation = load_annotation(record, annotation_id)
+                    gui_memory.create_memory_item_from_annotation(record, MEMORY_ROOT_DIR, annotation, payload)
+                    return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
                 if remainder.startswith("/annotations/") and remainder.endswith("/comments"):
                     annotation_id = remainder.removeprefix("/annotations/").removesuffix("/comments").strip("/")
                     append_annotation_comment(record, annotation_id, payload)
                     return self.write_json(load_paper_annotations(record))
+                if remainder == "/memory/items":
+                    gui_memory.create_memory_item(record, MEMORY_ROOT_DIR, payload)
+                    return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
                 if remainder == "/notes":
-                    create_memory_note(record, payload)
-                    return self.write_json(build_memory_payload(record))
+                    gui_memory.create_memory_note(record, MEMORY_ROOT_DIR, payload)
+                    return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
             except (ValueError, FileNotFoundError) as error:
                 status = HTTPStatus.BAD_REQUEST if isinstance(error, ValueError) else HTTPStatus.NOT_FOUND
                 return self.write_json({"error": str(error)}, status=status)
@@ -2359,6 +2670,16 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
 
     def do_PATCH(self):
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/agent-memory/"):
+            item_id = unquote(parsed.path.removeprefix("/api/agent-memory/").strip("/"))
+            payload = self.read_json_body()
+            try:
+                return self.write_json(gui_agent_memory.update_agent_memory_item(MEMORY_ROOT_DIR, item_id, payload))
+            except ValueError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            except FileNotFoundError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
+
         paper_route = parse_paper_api_path(parsed.path)
         if not paper_route:
             return self.write_json({"error": "未知接口"}, status=HTTPStatus.NOT_FOUND)
@@ -2367,6 +2688,13 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         payload = self.read_json_body()
         try:
             record = get_record(paper_id)
+            if remainder == "/library":
+                gui_library.update_library_meta(record, MEMORY_ROOT_DIR, payload)
+                return self.write_json(build_paper_summary(record))
+            if remainder.startswith("/memory/items/"):
+                item_id = unquote(remainder.removeprefix("/memory/items/").strip("/"))
+                gui_memory.update_memory_item(record, MEMORY_ROOT_DIR, item_id, payload)
+                return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
             if remainder.startswith("/annotations/") and "/comments/" in remainder:
                 annotation_suffix = remainder.removeprefix("/annotations/")
                 annotation_id, comment_id = annotation_suffix.split("/comments/", 1)
@@ -2385,6 +2713,16 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/agent-memory/"):
+            item_id = unquote(parsed.path.removeprefix("/api/agent-memory/").strip("/"))
+            try:
+                gui_agent_memory.delete_agent_memory_item(MEMORY_ROOT_DIR, item_id)
+                return self.write_json(gui_agent_memory.build_agent_memory_payload(MEMORY_ROOT_DIR))
+            except ValueError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            except FileNotFoundError as error:
+                return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
+
         paper_route = parse_paper_api_path(parsed.path)
         if not paper_route:
             return self.write_json({"error": "未知接口"}, status=HTTPStatus.NOT_FOUND)
@@ -2392,9 +2730,15 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         paper_id, remainder = paper_route
         try:
             record = get_record(paper_id)
+            if remainder.startswith("/memory/items/"):
+                item_id = unquote(remainder.removeprefix("/memory/items/").strip("/"))
+                gui_memory.delete_memory_item(record, MEMORY_ROOT_DIR, item_id)
+                return self.write_json(gui_memory.build_memory_payload(record, MEMORY_ROOT_DIR))
             if remainder.startswith("/annotations/"):
                 delete_annotation(record, remainder.removeprefix("/annotations/").strip("/"))
                 return self.write_json(load_paper_annotations(record))
+        except ValueError as error:
+            return self.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
         except FileNotFoundError as error:
             return self.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
 
@@ -2433,23 +2777,28 @@ def prepare_gui_server(
             current_timestamp_iso(),
         )
         sync_paper_index(store)
+        copilot_recovery = resume_active_copilot_runs()
     except Exception:
         server.server_close()
         lock.release()
         raise
-    return server, lock, interrupted_count
+    return server, lock, interrupted_count, copilot_recovery
 
 
 def main():
     args = build_parser().parse_args()
     try:
-        server, instance_lock, interrupted_count = prepare_gui_server(args.host, args.port)
+        server, instance_lock, interrupted_count, copilot_recovery = prepare_gui_server(args.host, args.port)
     except (OSError, RuntimeError) as error:
         print(f"无法启动 cark GUI: {error}", file=sys.stderr)
         return 2
     print(f"cark GUI listening on http://{args.host}:{args.port}/")
     if interrupted_count:
         print(f"[cark-gui] 已将 {interrupted_count} 个未完成任务标记为已中断。")
+    if copilot_recovery.get("expired"):
+        print(f"[cark-gui] 已将 {copilot_recovery['expired']} 个超时共读任务标记为失败。")
+    if copilot_recovery.get("resumed"):
+        print(f"[cark-gui] 已恢复 {copilot_recovery['resumed']} 个未完成共读任务。")
     if not args.no_browser:
         webbrowser.open(f"http://{args.host}:{args.port}/")
     try:

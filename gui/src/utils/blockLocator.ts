@@ -14,7 +14,7 @@ function shorten(text: string, max = 120) {
   return text.length <= max ? text : text.slice(0, max)
 }
 
-function buildSearchTerms(block: PaperBlock) {
+export function buildBlockSearchTerms(block: PaperBlock) {
   if (block.type === 'image') {
     const imageName = block.imagePath?.split('/').pop()
     return [imageName ?? '', ...(block.imageCaption ?? []), ...(block.imageFootnote ?? [])]
@@ -57,7 +57,7 @@ export function locateBlockNode(container: HTMLElement, block: PaperBlock) {
     return images.find((node) => node.getAttribute('src')?.includes(filename)) ?? null
   }
 
-  const terms = buildSearchTerms(block).map(normalizeLocatorText).filter(Boolean)
+  const terms = buildBlockSearchTerms(block).map(normalizeLocatorText).filter(Boolean)
   if (terms.length === 0) {
     return null
   }

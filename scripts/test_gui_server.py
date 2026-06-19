@@ -1,18 +1,27 @@
+import json
+import tempfile
 import unittest
 from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import gui_copilot_runs
+import gui_agent_memory
+import gui_memory
+
 from gui_server import (
     GuiRequestHandler,
     PaperRecord,
     annotation_file_path,
+    build_agent_messages,
     build_task_command,
     ensure_upload_ready,
     import_zotero_paper,
     list_zotero_papers,
+    load_paper_annotations,
     normalize_annotation_comment,
     prepare_gui_server,
+    resume_active_copilot_runs,
     sanitize_gui_settings,
 )
 
@@ -106,22 +115,58 @@ class GuiServerStartupTests(unittest.TestCase):
             events.append("bind")
             return server
 
-        with patch("gui_server.discover_records", return_value={}):
-            prepared, prepared_lock, interrupted = prepare_gui_server(
-                "127.0.0.1",
-                8765,
-                store=store,
-                owner_id="owner-new",
-                instance_lock=lock,
-                server_factory=bind,
-            )
+        with (
+            patch("gui_server.discover_records", return_value={}),
+            patch("gui_server.resume_active_copilot_runs", return_value={"resumed": 0, "expired": 0}),
+        ):
+            prepared, prepared_lock, interrupted, copilot_recovery = prepare_gui_server(
+                    "127.0.0.1",
+                    8765,
+                    store=store,
+                    owner_id="owner-new",
+                    instance_lock=lock,
+                    server_factory=bind,
+                )
 
         self.assertIs(prepared, server)
         self.assertIs(prepared_lock, lock)
         self.assertEqual(interrupted, 0)
+        self.assertEqual(copilot_recovery, {"resumed": 0, "expired": 0})
         self.assertEqual(events, ["bind", "mark", "sync"])
         prepared.server_close()
         prepared_lock.release()
+
+    def test_active_copilot_runs_are_resumed_on_startup(self):
+        record = PaperRecord(
+            paper_id="paper-1",
+            title="Paper",
+            task_id=None,
+            root_dir=Path("paper"),
+            auto_dir=Path("paper/auto"),
+            updated_at=0,
+            available_views=["linearized"],
+            source_pdf=None,
+            files={},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory_root = Path(temp_dir)
+            run = gui_copilot_runs.create_run(
+                record,
+                memory_root,
+                {"annotationId": "annotation-1"},
+                [{"id": "agent-a", "name": "Agent A"}],
+            )
+            gui_copilot_runs.mark_agent_running(record, memory_root, str(run["runId"]), "agent-a")
+
+            with (
+                patch("gui_server.MEMORY_ROOT_DIR", memory_root),
+                patch("gui_server.indexed_records", return_value={record.paper_id: record}),
+                patch("gui_server.spawn_copilot_run_worker") as spawn_worker,
+            ):
+                recovery = resume_active_copilot_runs()
+
+            self.assertEqual(recovery, {"resumed": 1, "expired": 0})
+            spawn_worker.assert_called_once_with(record.paper_id, str(run["runId"]))
 
     def test_upload_readiness_rejects_missing_capabilities(self):
         with patch(
@@ -177,6 +222,51 @@ class GuiServerStartupTests(unittest.TestCase):
                     "status": "pending",
                 }
             )
+
+    def test_agent_messages_include_relevant_global_agent_memory(self):
+        record = PaperRecord(
+            paper_id="paper-1",
+            title="Hermes Paper",
+            task_id=None,
+            root_dir=Path("paper"),
+            auto_dir=Path("paper/auto"),
+            updated_at=0,
+            available_views=["linearized"],
+            source_pdf=None,
+            files={},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory_root = Path(temp_dir)
+            gui_agent_memory.create_agent_memory_item(
+                memory_root,
+                {
+                    "type": "research_interest",
+                    "text": "User cares about Hermes-style self-evolving global agent memory.",
+                    "tags": ["Hermes", "agent-memory"],
+                },
+            )
+
+            with patch("gui_server.MEMORY_ROOT_DIR", memory_root):
+                messages = build_agent_messages(
+                    record,
+                    {
+                        "view": "linearized",
+                        "quote": "Hermes-like memory",
+                        "contextBefore": "",
+                        "contextAfter": "",
+                        "comments": [],
+                    },
+                    {
+                        "id": "agent-a",
+                        "rolePrompt": "Read carefully.",
+                    },
+                    context_cache={"overview": "Overview"},
+                    relevant_chunks=[],
+                )
+
+        shared_context = messages[1]["content"]
+        self.assertIn("长期全局记忆", shared_context)
+        self.assertIn("self-evolving global agent memory", shared_context)
         with self.assertRaisesRegex(ValueError, "不允许保存占位评论"):
             normalize_annotation_comment(
                 {
@@ -201,6 +291,63 @@ class GuiServerStartupTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(FileNotFoundError, "标识非法"):
             annotation_file_path(record, "../../paper_profile")
+
+    def test_legacy_long_paper_annotations_are_restored_after_hash_migration(self):
+        record = PaperRecord(
+            paper_id="p" * 121,
+            title="Paper",
+            task_id=None,
+            root_dir=Path("paper"),
+            auto_dir=Path("paper/auto"),
+            updated_at=0,
+            available_views=["linearized"],
+            source_pdf=None,
+            files={},
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory_root = Path(temp_dir)
+            legacy_annotations_dir = memory_root / "papers" / record.paper_id / "annotations"
+            legacy_annotations_dir.mkdir(parents=True)
+            (legacy_annotations_dir / "annotation-old.json").write_text(
+                json.dumps(
+                    {
+                        "id": "annotation-old",
+                        "paperId": record.paper_id,
+                        "view": "linearized",
+                        "quote": "Important sentence.",
+                        "anchorTop": 10,
+                        "anchorHeight": 24,
+                        "createdAt": "2026-06-17T00:00:00",
+                        "updatedAt": "2026-06-17T00:00:00",
+                        "archived": False,
+                        "comments": [
+                            {
+                                "id": "comment-old",
+                                "authorType": "user",
+                                "authorLabel": "me",
+                                "content": "This old comment must stay visible.",
+                                "createdAt": "2026-06-17T00:00:00",
+                                "updatedAt": "2026-06-17T00:00:00",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("gui_server.MEMORY_ROOT_DIR", memory_root):
+                annotations = load_paper_annotations(record)
+
+            self.assertEqual(len(annotations), 1)
+            self.assertEqual(annotations[0]["comments"][0]["content"], "This old comment must stay visible.")
+            migrated_path = (
+                memory_root
+                / "papers"
+                / gui_memory.paper_memory_key(record)
+                / "annotations"
+                / "annotation-old.json"
+            )
+            self.assertTrue(migrated_path.exists())
 
     def test_upload_rejection_happens_before_reading_request_body(self):
         handler = object.__new__(GuiRequestHandler)
