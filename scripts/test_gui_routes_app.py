@@ -38,6 +38,7 @@ class GuiRoutesAppTests(unittest.TestCase):
             list_zotero_papers=Mock(),
             list_papers=Mock(),
             search_records=search_records,
+            list_memory_candidates=Mock(),
         )
 
         self.assertTrue(handled)
@@ -58,6 +59,7 @@ class GuiRoutesAppTests(unittest.TestCase):
             list_zotero_papers=Mock(side_effect=ZoteroUnavailableError("offline")),
             list_papers=Mock(),
             search_records=Mock(),
+            list_memory_candidates=Mock(),
         )
 
         self.assertTrue(handled)
@@ -80,6 +82,8 @@ class GuiRoutesAppTests(unittest.TestCase):
             create_upload_task=Mock(),
             import_zotero_paper=Mock(),
             retry_upload_task=Mock(),
+            activate_memory_candidate=Mock(),
+            archive_memory_candidate=Mock(),
             get_record=Mock(),
             resolve_open_target=Mock(),
             open_in_explorer=Mock(),
@@ -108,6 +112,8 @@ class GuiRoutesAppTests(unittest.TestCase):
                 create_upload_task=Mock(),
                 import_zotero_paper=Mock(),
                 retry_upload_task=Mock(),
+                activate_memory_candidate=Mock(),
+                archive_memory_candidate=Mock(),
                 get_record=Mock(),
                 resolve_open_target=Mock(),
                 open_in_explorer=open_in_explorer,
@@ -118,6 +124,56 @@ class GuiRoutesAppTests(unittest.TestCase):
         self.assertTrue(handled)
         open_in_explorer.assert_called_once_with(runtime_output_dir)
         self.assertEqual(handler.json_calls, [({"ok": True}, HTTPStatus.OK)])
+
+    def test_handle_get_memory_candidates_returns_payload(self):
+        handler = FakeHandler()
+        list_memory_candidates = Mock(return_value={"items": [], "count": 0})
+
+        handled = gui_routes_app.handle_get(
+            handler,
+            urlparse("/api/memory/candidates"),
+            load_settings=Mock(),
+            detect_capabilities=Mock(),
+            list_tasks=Mock(),
+            build_agent_memory_payload=Mock(),
+            zotero_status=Mock(),
+            list_zotero_papers=Mock(),
+            list_papers=Mock(),
+            search_records=Mock(),
+            list_memory_candidates=list_memory_candidates,
+        )
+
+        self.assertTrue(handled)
+        list_memory_candidates.assert_called_once_with()
+        self.assertEqual(handler.json_calls, [({"items": [], "count": 0}, HTTPStatus.OK)])
+
+    def test_handle_post_activate_memory_candidate(self):
+        handler = FakeHandler()
+        activate_memory_candidate = Mock(return_value={"id": "memory-1", "activationStatus": "active"})
+
+        handled = gui_routes_app.handle_post(
+            handler,
+            urlparse("/api/memory/candidates/memory-1/activate"),
+            read_json_body=Mock(),
+            read_binary_body=Mock(),
+            save_settings=Mock(),
+            create_agent_memory_item=Mock(),
+            run_connection_test=Mock(),
+            ensure_upload_ready=Mock(),
+            create_upload_task=Mock(),
+            import_zotero_paper=Mock(),
+            retry_upload_task=Mock(),
+            activate_memory_candidate=activate_memory_candidate,
+            archive_memory_candidate=Mock(),
+            get_record=Mock(),
+            resolve_open_target=Mock(),
+            open_in_explorer=Mock(),
+            runtime_output_dir=Path("."),
+        )
+
+        self.assertTrue(handled)
+        activate_memory_candidate.assert_called_once_with("memory-1")
+        self.assertEqual(handler.json_calls, [({"id": "memory-1", "activationStatus": "active"}, HTTPStatus.OK)])
 
     def test_handle_patch_agent_memory_updates_item(self):
         handler = FakeHandler()

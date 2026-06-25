@@ -10,6 +10,8 @@ import type {
   CreateAnnotationCommentInput,
   InvokeAnnotationAgentInput,
   CreatePaperMemoryItemInput,
+  MemoryCandidateItem,
+  MemoryCandidatePayload,
   CreatePaperAnnotationInput,
   CreatePaperNoteInput,
   PaperAnnotation,
@@ -159,6 +161,28 @@ export function deleteAgentMemoryItem(itemId: string) {
     `/api/agent-memory/${encodeURIComponent(itemId)}`,
     {
       method: 'DELETE',
+    },
+  )
+}
+
+export function fetchMemoryCandidates() {
+  return requestJson<MemoryCandidatePayload>('/api/memory/candidates')
+}
+
+export function postActivateMemoryCandidate(itemId: string) {
+  return requestJson<MemoryCandidateItem>(
+    `/api/memory/candidates/${encodeURIComponent(itemId)}/activate`,
+    {
+      method: 'POST',
+    },
+  )
+}
+
+export function postArchiveMemoryCandidate(itemId: string) {
+  return requestJson<MemoryCandidateItem>(
+    `/api/memory/candidates/${encodeURIComponent(itemId)}/archive`,
+    {
+      method: 'POST',
     },
   )
 }

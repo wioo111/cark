@@ -289,10 +289,12 @@ export function useReaderAnnotationActions({
         text,
         quote: annotation.quote,
         tags: ['annotation'],
+        activationStatus: 'candidate',
+        confidence: 0.72,
       })
       setMemoryRefreshKey((current) => current + 1)
       setMemoryOpen(true)
-      setMemoryNotice('已沉淀到论文记忆')
+      setMemoryNotice('已生成候选记忆，待确认')
       setMemorySavedAnnotationIds((current) => (current.includes(annotation.id) ? current : [...current, annotation.id]))
       window.setTimeout(() => {
         setMemorySavedAnnotationIds((current) => current.filter((id) => id !== annotation.id))

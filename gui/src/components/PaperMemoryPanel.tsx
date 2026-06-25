@@ -1,4 +1,4 @@
-import { AlertCircle, BookMarked, Check, Download, LoaderCircle, Pencil, Save, Trash2, X } from 'lucide-react'
+import { AlertCircle, Archive, BookMarked, Check, Download, LoaderCircle, Pencil, Save, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -133,18 +133,31 @@ export function PaperMemoryPanel({
 
   const tags = useMemo(() => parseTags(tagText), [tagText])
   const editTags = useMemo(() => parseTags(editTagText), [editTagText])
+  const candidateMemoryItems = useMemo(
+    () => memory?.items.filter(isCandidateMemoryItem) ?? [],
+    [memory],
+  )
+  const activeMemoryItems = useMemo(
+    () => memory?.items.filter(isActiveMemoryItem) ?? [],
+    [memory],
+  )
+  const archivedMemoryItems = useMemo(
+    () => memory?.items.filter(isArchivedMemoryItem) ?? [],
+    [memory],
+  )
   const memoryGroups = useMemo(() => {
     if (!memory) {
       return []
     }
+    const activeByType = (type: MemoryItemType) => activeMemoryItems.filter((item) => item.type === type)
     return [
-      { key: 'insights', title: '关键洞察', items: memory.insights },
-      { key: 'notes', title: '笔记', items: memory.notes },
-      { key: 'questions', title: '问题', items: memory.questions },
-      { key: 'actions', title: '行动项', items: memory.actions },
+      { key: 'insights', title: '关键洞察', items: activeByType('insight') },
+      { key: 'notes', title: '笔记', items: activeByType('note') },
+      { key: 'questions', title: '问题', items: activeByType('question') },
+      { key: 'actions', title: '行动项', items: activeByType('action') },
     ].filter((group) => group.items.length > 0)
-  }, [memory])
-  const visibleMemoryItems = memory?.items ?? []
+  }, [activeMemoryItems, memory])
+  const visibleMemoryItems = activeMemoryItems
 
   if (!open) {
     return null
@@ -247,6 +260,39 @@ export function PaperMemoryPanel({
     }
   }
 
+  async function handleActivateItem(item: PaperMemoryItem) {
+    setMutatingItemId(item.id)
+    setError(null)
+    try {
+      setMemory(await patchPaperMemoryItem(paperId, item.id, {
+        activationStatus: 'active',
+        status: 'active',
+      }))
+    } catch (activateError) {
+      setError(activateError instanceof Error ? activateError.message : '确认记忆失败')
+    } finally {
+      setMutatingItemId(null)
+    }
+  }
+
+  async function handleArchiveItem(item: PaperMemoryItem) {
+    setMutatingItemId(item.id)
+    setError(null)
+    try {
+      setMemory(await patchPaperMemoryItem(paperId, item.id, {
+        activationStatus: 'archived',
+        status: 'archived',
+      }))
+      if (editingItemId === item.id) {
+        handleEditCancel()
+      }
+    } catch (archiveError) {
+      setError(archiveError instanceof Error ? archiveError.message : '归档记忆失败')
+    } finally {
+      setMutatingItemId(null)
+    }
+  }
+
   return (
     <div className="cark-overlay fixed inset-0 z-[66] flex justify-end backdrop-blur-sm">
       <button type="button" aria-label="关闭论文记忆" className="flex-1" onClick={onClose} />
@@ -312,6 +358,78 @@ export function PaperMemoryPanel({
               <MemoryList title="未解问题" items={memory.openQuestions} />
               <MemoryList title="下一步动作" items={memory.recommendedActions} />
             </div>
+          ) : null}
+
+          {candidateMemoryItems.length > 0 ? (
+            <section className="mt-5 rounded-[24px] border border-amber-300/24 bg-amber-300/[0.06] px-4 py-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="cark-faint text-xs uppercase tracking-[0.18em]">待确认记忆</p>
+                  <h3 className="cark-title mt-1 font-serif text-xl">需要用户裁决</h3>
+                </div>
+                <span className="cark-chip-accent rounded-full px-2.5 py-1 text-[11px]">{candidateMemoryItems.length}</span>
+              </div>
+              <div className="space-y-3">
+                {candidateMemoryItems.map((item) => (
+                  <article
+                    key={item.id}
+                    data-memory-item-id={item.id}
+                    className={[
+                      'rounded-[20px] border bg-[var(--surface-elevated)] px-4 py-4 transition [border-color:var(--border-soft)]',
+                      item.id === flashItemId
+                        ? 'border-[rgba(var(--accent-rgb),0.65)] bg-[rgba(var(--accent-rgb),0.10)] shadow-[0_0_0_2px_rgba(var(--accent-rgb),0.28)]'
+                        : '',
+                    ].join(' ')}
+                  >
+                    <MemoryItemHeader item={item} label="candidate" />
+                    {item.quote ? (
+                      <p className="cark-faint mb-3 line-clamp-2 border-l-2 border-amber-300/50 pl-3 text-xs leading-5">
+                        {item.quote}
+                      </p>
+                    ) : null}
+                    <MarkdownComment content={item.text || item.content} />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {canLocateMemoryItem(item) && onLocateItem ? (
+                        <button
+                          type="button"
+                          onClick={() => onLocateItem(item)}
+                          className="cark-button-secondary rounded-full px-3 py-1.5 text-xs"
+                        >
+                          定位原文
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={mutatingItemId === item.id}
+                        onClick={() => void handleActivateItem(item)}
+                        className="cark-button-accent inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {mutatingItemId === item.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        确认
+                      </button>
+                      <button
+                        type="button"
+                        disabled={mutatingItemId === item.id}
+                        onClick={() => void handleArchiveItem(item)}
+                        className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Archive className="h-3.5 w-3.5" />
+                        归档
+                      </button>
+                      <button
+                        type="button"
+                        disabled={mutatingItemId === item.id}
+                        onClick={() => void handleDeleteItem(item)}
+                        className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        删除
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
           ) : null}
 
           <section className="cark-card mt-5 rounded-[24px] p-4">
@@ -400,7 +518,7 @@ export function PaperMemoryPanel({
 
           <section className="mt-5">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h3 className="cark-title font-serif text-xl">最近沉淀</h3>
+              <h3 className="cark-title font-serif text-xl">已确认记忆</h3>
               <span className="cark-faint text-xs">{visibleMemoryItems.length}</span>
             </div>
             {memory && visibleMemoryItems.length > 0 ? (
@@ -417,9 +535,7 @@ export function PaperMemoryPanel({
                     ].join(' ')}
                   >
                     <div className="mb-3 flex items-center justify-between gap-3">
-                      <span className="cark-chip-accent rounded-full px-2.5 py-1 text-[11px] uppercase">
-                        {note.type}
-                      </span>
+                      <MemoryItemHeader item={note} label="active" />
                       <div className="flex items-center gap-2">
                         {canLocateMemoryItem(note) && onLocateItem ? (
                           <button
@@ -437,6 +553,15 @@ export function PaperMemoryPanel({
                           aria-label="Edit memory"
                         >
                           <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={mutatingItemId === note.id}
+                          onClick={() => void handleArchiveItem(note)}
+                          className="cark-button-secondary inline-flex h-8 w-8 items-center justify-center rounded-full disabled:cursor-not-allowed disabled:opacity-60"
+                          aria-label="Archive memory"
+                        >
+                          <Archive className="h-3.5 w-3.5" />
                         </button>
                         <button
                           type="button"
@@ -520,10 +645,50 @@ export function PaperMemoryPanel({
               </div>
             ) : (
               <div className="cark-faint rounded-[20px] border border-dashed [border-color:var(--border-strong)] px-4 py-5 text-sm">
-                还没有沉淀。选中一句真正刺眼的话，留下判断。
+                还没有已确认记忆。先从候选区确认一条真正值得复用的判断。
               </div>
             )}
           </section>
+
+          {archivedMemoryItems.length > 0 ? (
+            <section className="mt-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="cark-title font-serif text-xl">已归档</h3>
+                <span className="cark-faint text-xs">{archivedMemoryItems.length}</span>
+              </div>
+              <div className="space-y-2">
+                {archivedMemoryItems.map((item) => (
+                  <article key={item.id} data-memory-item-id={item.id} className="rounded-[18px] border [border-color:var(--border-soft)] bg-[var(--surface-soft)] px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <MemoryItemHeader item={item} label="archived" />
+                        <p className="cark-muted mt-2 line-clamp-2 text-xs leading-5">{item.text || item.content}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={mutatingItemId === item.id}
+                          onClick={() => void handleActivateItem(item)}
+                          className="cark-button-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          还原
+                        </button>
+                        <button
+                          type="button"
+                          disabled={mutatingItemId === item.id}
+                          onClick={() => void handleDeleteItem(item)}
+                          className="cark-button-secondary inline-flex h-8 w-8 items-center justify-center rounded-full disabled:cursor-not-allowed disabled:opacity-60"
+                          aria-label="Delete archived memory"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </aside>
     </div>
@@ -570,6 +735,22 @@ function MemoryList({ title, items }: { title: string; items: string[] }) {
   )
 }
 
+function MemoryItemHeader({ item, label }: { item: PaperMemoryItem; label: string }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <span className="cark-chip-accent rounded-full px-2.5 py-1 text-[11px] uppercase">
+        {item.type}
+      </span>
+      <span className="cark-faint rounded-full border [border-color:var(--border-soft)] px-2.5 py-1 text-[11px] uppercase">
+        {label}
+      </span>
+      {typeof item.confidence === 'number' ? (
+        <span className="cark-faint text-[11px]">置信度 {item.confidence.toFixed(2)}</span>
+      ) : null}
+    </div>
+  )
+}
+
 function buildSeededNoteContent(seed: MemoryNoteSeed) {
   return [
     seed.contextBefore ? `前文：${seed.contextBefore}` : '',
@@ -599,4 +780,16 @@ function canLocateMemoryItem(item: PaperMemoryItem) {
     || item.anchor?.contextBefore
     || item.anchor?.contextAfter,
   )
+}
+
+function isCandidateMemoryItem(item: PaperMemoryItem) {
+  return item.activationStatus === 'candidate'
+}
+
+function isArchivedMemoryItem(item: PaperMemoryItem) {
+  return item.activationStatus === 'archived' || item.status === 'archived'
+}
+
+function isActiveMemoryItem(item: PaperMemoryItem) {
+  return !isArchivedMemoryItem(item) && (item.activationStatus ?? 'active') === 'active'
 }

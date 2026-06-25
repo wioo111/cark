@@ -12,6 +12,7 @@ import {
   postUploadPdf,
 } from '@/api'
 import { PaperListItem } from '@/components/PaperListItem'
+import { MemoryInbox } from '@/components/MemoryInbox'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TaskCenter } from '@/components/TaskCenter'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
@@ -595,14 +596,17 @@ export default function Home() {
             </section>
           </div>
 
-          <TaskCenter
-            tasks={tasks}
-            loading={tasksLoading}
-            retryingTaskId={retryingTaskId}
-            onRetry={(taskId) => void handleRetry(taskId)}
-            onOpenPaper={openPaper}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
+          <div className="space-y-6">
+            <MemoryInbox onChanged={() => void refreshPapers()} />
+            <TaskCenter
+              tasks={tasks}
+              loading={tasksLoading}
+              retryingTaskId={retryingTaskId}
+              onRetry={(taskId) => void handleRetry(taskId)}
+              onOpenPaper={openPaper}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          </div>
         </section>
       </div>
 

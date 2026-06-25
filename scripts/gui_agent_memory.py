@@ -177,7 +177,13 @@ def create_agent_memory_item(memory_root: Path, payload: dict[str, object]) -> d
     return item
 
 
-def update_agent_memory_item(memory_root: Path, item_id: str, payload: dict[str, object]) -> dict[str, object]:
+def update_agent_memory_item(
+    memory_root: Path,
+    item_id: str,
+    payload: dict[str, object],
+    *,
+    revision_reason: str = "update",
+) -> dict[str, object]:
     validate_agent_memory_id(item_id)
     with _AGENT_MEMORY_LOCK:
         items = load_agent_memory_items(memory_root, include_archived=True)
@@ -196,7 +202,7 @@ def update_agent_memory_item(memory_root: Path, item_id: str, payload: dict[str,
             if has_material_agent_memory_change(normalized_existing, item):
                 item["revisionHistory"] = gui_memory_engine.append_revision_snapshot(
                     item.get("revisionHistory") if isinstance(item.get("revisionHistory"), list) else [],
-                    gui_memory_engine.build_revision_snapshot(normalized_existing, reason="update"),
+                    gui_memory_engine.build_revision_snapshot(normalized_existing, reason=revision_reason),
                 )
             items[index] = item
             write_items(memory_root, items)

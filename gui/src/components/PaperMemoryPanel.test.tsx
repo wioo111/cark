@@ -42,6 +42,25 @@ const noteItem: PaperMemoryItem = {
   blockPreview: null,
   tags: ['risk'],
   status: 'active',
+  activationStatus: 'active',
+}
+
+const candidateItem: PaperMemoryItem = {
+  ...noteItem,
+  id: 'memory-candidate',
+  text: 'Candidate judgment',
+  content: 'Candidate judgment',
+  activationStatus: 'candidate',
+  confidence: 0.72,
+}
+
+const archivedItem: PaperMemoryItem = {
+  ...noteItem,
+  id: 'memory-archived',
+  text: 'Archived judgment',
+  content: 'Archived judgment',
+  status: 'archived',
+  activationStatus: 'archived',
 }
 
 const memoryPayload: PaperMemory = {
@@ -54,6 +73,10 @@ const memoryPayload: PaperMemory = {
   noteCount: 1,
   lastUpdated: '2026-06-17T00:00:00',
   items: [noteItem],
+  activeItems: [noteItem],
+  candidateItems: [],
+  activeCount: 1,
+  candidateCount: 0,
   notes: [noteItem],
   questions: [],
   actions: [],
@@ -244,6 +267,90 @@ describe('PaperMemoryPanel', () => {
 
     await waitFor(() => {
       expect(deletePaperMemoryItem).toHaveBeenCalledWith('paper-1', 'memory-1')
+    })
+  })
+
+  it('confirms and archives candidate memories', async () => {
+    vi.mocked(fetchPaperMemory).mockResolvedValue({
+      ...memoryPayload,
+      items: [candidateItem, noteItem, archivedItem],
+      activeItems: [noteItem],
+      candidateItems: [candidateItem],
+      notes: [candidateItem, noteItem, archivedItem],
+      recentNotes: [candidateItem, noteItem, archivedItem],
+      candidateCount: 1,
+    })
+    vi.mocked(patchPaperMemoryItem)
+      .mockResolvedValueOnce({
+        ...memoryPayload,
+        items: [{ ...candidateItem, activationStatus: 'active', status: 'active' }, noteItem],
+        activeItems: [{ ...candidateItem, activationStatus: 'active', status: 'active' }, noteItem],
+        candidateItems: [],
+        notes: [{ ...candidateItem, activationStatus: 'active', status: 'active' }, noteItem],
+        recentNotes: [{ ...candidateItem, activationStatus: 'active', status: 'active' }, noteItem],
+      })
+      .mockResolvedValueOnce({
+        ...memoryPayload,
+        items: [noteItem, { ...candidateItem, activationStatus: 'archived', status: 'archived' }],
+        activeItems: [noteItem],
+        candidateItems: [],
+        notes: [noteItem, { ...candidateItem, activationStatus: 'archived', status: 'archived' }],
+        recentNotes: [noteItem, { ...candidateItem, activationStatus: 'archived', status: 'archived' }],
+      })
+
+    render(
+      <PaperMemoryPanel
+        open
+        paperId="paper-1"
+        paperTitle="Paper"
+        seed={null}
+        onClose={vi.fn()}
+        onSeedConsumed={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('待确认记忆')).toBeInTheDocument()
+    expect(screen.getByText('Candidate judgment')).toBeInTheDocument()
+    expect(screen.getByText('已归档')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '确认' }))
+
+    await waitFor(() => {
+      expect(patchPaperMemoryItem).toHaveBeenCalledWith('paper-1', 'memory-candidate', {
+        activationStatus: 'active',
+        status: 'active',
+      })
+    })
+
+    vi.mocked(fetchPaperMemory).mockResolvedValue({
+      ...memoryPayload,
+      items: [candidateItem],
+      activeItems: [],
+      candidateItems: [candidateItem],
+      notes: [candidateItem],
+      recentNotes: [candidateItem],
+      candidateCount: 1,
+    })
+    cleanup()
+    render(
+      <PaperMemoryPanel
+        open
+        paperId="paper-1"
+        paperTitle="Paper"
+        seed={null}
+        onClose={vi.fn()}
+        onSeedConsumed={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('待确认记忆')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '归档' }))
+
+    await waitFor(() => {
+      expect(patchPaperMemoryItem).toHaveBeenCalledWith('paper-1', 'memory-candidate', {
+        activationStatus: 'archived',
+        status: 'archived',
+      })
     })
   })
 })

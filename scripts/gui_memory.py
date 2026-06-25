@@ -340,6 +340,8 @@ def update_memory_item(
     memory_root: Path,
     item_id: str,
     payload: dict[str, object],
+    *,
+    revision_reason: str = "update",
 ) -> dict[str, object]:
     path = memory_item_file_path(record, memory_root, item_id)
     if not path.exists():
@@ -378,7 +380,7 @@ def update_memory_item(
     if has_material_memory_change(normalized_existing, item):
         item["revisionHistory"] = gui_memory_engine.append_revision_snapshot(
             item.get("revisionHistory") if isinstance(item.get("revisionHistory"), list) else [],
-            gui_memory_engine.build_revision_snapshot(normalized_existing, reason="update"),
+            gui_memory_engine.build_revision_snapshot(normalized_existing, reason=revision_reason),
         )
     write_json_file(path, item)
     return item

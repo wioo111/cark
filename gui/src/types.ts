@@ -102,6 +102,20 @@ export interface AgentMemoryPayload {
   lastUpdated?: string | null
 }
 
+export type MemoryCandidateLayer = 'paper' | 'global'
+
+export type MemoryCandidateItem = (PaperMemoryItem | AgentMemoryItem) & {
+  layer: MemoryCandidateLayer
+  paperId?: string | null
+  paperTitle?: string | null
+  locator?: StableLocator | null
+}
+
+export interface MemoryCandidatePayload {
+  items: MemoryCandidateItem[]
+  count: number
+}
+
 export interface CreateAgentMemoryInput {
   type: AgentMemoryType
   text: string

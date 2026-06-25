@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchSearchResults,
   fetchAgentMemory,
+  fetchMemoryCandidates,
   patchAgentMemoryItem,
   patchPaperLibrary,
+  postActivateMemoryCandidate,
   postAgentMemoryItem,
+  postArchiveMemoryCandidate,
   postAnnotationMemoryItem,
   postCancelCopilotRun,
   postCopilotRun,
@@ -98,6 +101,33 @@ describe('agent memory api', () => {
 })
 
 describe('paper memory api', () => {
+  it('fetches and updates memory candidates', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [],
+        count: 0,
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchMemoryCandidates()
+    await postActivateMemoryCandidate('memory-1')
+    await postArchiveMemoryCandidate('memory-2')
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/memory/candidates', undefined)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/memory/candidates/memory-1/activate',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/memory/candidates/memory-2/archive',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('creates memory from an annotation route', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

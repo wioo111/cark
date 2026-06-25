@@ -17,6 +17,7 @@ def handle_get(
     list_zotero_papers: Callable[[str], list[dict[str, object]]],
     list_papers: Callable[[], list[dict[str, object]]],
     search_records: Callable[[str, int], list[dict[str, object]]],
+    list_memory_candidates: Callable[[], dict[str, object]],
 ) -> bool:
     if parsed.path == "/api/settings":
         handler.write_json(load_settings())
@@ -33,6 +34,10 @@ def handle_get(
     if parsed.path == "/api/agent-memory":
         query = parse_qs(parsed.query).get("q", [""])[0]
         handler.write_json(build_agent_memory_payload(query))
+        return True
+
+    if parsed.path == "/api/memory/candidates":
+        handler.write_json(list_memory_candidates())
         return True
 
     if parsed.path == "/api/zotero/status":
@@ -78,6 +83,8 @@ def handle_post(
     create_upload_task: Callable[[str, bytes], dict[str, object]],
     import_zotero_paper: Callable[[str], dict[str, object]],
     retry_upload_task: Callable[[str], dict[str, object]],
+    activate_memory_candidate: Callable[[str], dict[str, object]],
+    archive_memory_candidate: Callable[[str], dict[str, object]],
     get_record: Callable[[str], Any],
     resolve_open_target: Callable[[Any, str], Any],
     open_in_explorer: Callable[[Any], None],
@@ -92,6 +99,26 @@ def handle_post(
         try:
             item = create_agent_memory_item(payload)
             handler.write_json(item, status=HTTPStatus.CREATED)
+        except ValueError as error:
+            handler.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+        return True
+
+    if parsed.path.startswith("/api/memory/candidates/") and parsed.path.endswith("/activate"):
+        item_id = unquote(parsed.path.removeprefix("/api/memory/candidates/").removesuffix("/activate").strip("/"))
+        try:
+            handler.write_json(activate_memory_candidate(item_id))
+        except FileNotFoundError as error:
+            handler.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
+        except ValueError as error:
+            handler.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+        return True
+
+    if parsed.path.startswith("/api/memory/candidates/") and parsed.path.endswith("/archive"):
+        item_id = unquote(parsed.path.removeprefix("/api/memory/candidates/").removesuffix("/archive").strip("/"))
+        try:
+            handler.write_json(archive_memory_candidate(item_id))
+        except FileNotFoundError as error:
+            handler.write_json({"error": str(error)}, status=HTTPStatus.NOT_FOUND)
         except ValueError as error:
             handler.write_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
         return True

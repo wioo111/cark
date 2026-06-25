@@ -7,6 +7,7 @@ import gui_copilot_runs
 import gui_exports
 import gui_library
 import gui_memory
+import gui_memory_candidates
 
 
 class ServerBindings:
@@ -97,6 +98,7 @@ class ServerBindings:
             list_zotero_papers=self._list_zotero_papers_getter(),
             list_papers=self._list_papers_getter(),
             search_records=self._search_records_getter(),
+            get_record=self._get_record_getter(),
         )
 
     def app_post(self) -> dict[str, object]:
@@ -110,6 +112,7 @@ class ServerBindings:
             import_zotero_paper=self._import_zotero_paper_getter(),
             retry_upload_task=self._retry_upload_task_getter(),
             get_record=self._get_record_getter(),
+            list_papers=self._list_papers_getter(),
             resolve_open_target=self._resolve_open_target_getter(),
             open_in_explorer=self._open_in_explorer_getter(),
         )
@@ -188,6 +191,7 @@ def build_app_get_bindings(
     list_zotero_papers: Callable[[str], list[dict[str, object]]],
     list_papers: Callable[[], list[dict[str, object]]],
     search_records: Callable[[str, int], list[dict[str, object]]],
+    get_record: Callable[[str], Any],
 ) -> dict[str, object]:
     return {
         "load_settings": load_settings,
@@ -198,6 +202,10 @@ def build_app_get_bindings(
         "list_zotero_papers": list_zotero_papers,
         "list_papers": list_papers,
         "search_records": search_records,
+        "list_memory_candidates": lambda: gui_memory_candidates.list_memory_candidates(
+            memory_root,
+            list_candidate_records(list_papers, get_record),
+        ),
     }
 
 
@@ -212,6 +220,7 @@ def build_app_post_bindings(
     import_zotero_paper: Callable[[str], dict[str, object]],
     retry_upload_task: Callable[[str], dict[str, object]],
     get_record: Callable[[str], Any],
+    list_papers: Callable[[], list[dict[str, object]]],
     resolve_open_target: Callable[[Any, str], Any],
     open_in_explorer: Callable[[Any], None],
 ) -> dict[str, object]:
@@ -223,6 +232,16 @@ def build_app_post_bindings(
         "create_upload_task": create_upload_task,
         "import_zotero_paper": import_zotero_paper,
         "retry_upload_task": retry_upload_task,
+        "activate_memory_candidate": lambda item_id: gui_memory_candidates.activate_memory_candidate(
+            memory_root,
+            item_id,
+            list_candidate_records(list_papers, get_record),
+        ),
+        "archive_memory_candidate": lambda item_id: gui_memory_candidates.archive_memory_candidate(
+            memory_root,
+            item_id,
+            list_candidate_records(list_papers, get_record),
+        ),
         "get_record": get_record,
         "resolve_open_target": resolve_open_target,
         "open_in_explorer": open_in_explorer,
@@ -241,6 +260,22 @@ def build_app_patch_bindings(
             payload,
         ),
     }
+
+
+def list_candidate_records(
+    list_papers: Callable[[], list[dict[str, object]]],
+    get_record: Callable[[str], Any],
+) -> list[Any]:
+    records: list[Any] = []
+    for paper in list_papers():
+        paper_id = paper.get("id") if isinstance(paper, dict) else None
+        if not isinstance(paper_id, str) or not paper_id:
+            continue
+        try:
+            records.append(get_record(paper_id))
+        except FileNotFoundError:
+            continue
+    return records
 
 
 def build_app_delete_bindings(
