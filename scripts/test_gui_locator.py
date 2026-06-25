@@ -100,6 +100,63 @@ class GuiLocatorTests(unittest.TestCase):
             },
         )
 
+    def test_build_memory_locator_prefers_explicit_locator(self):
+        locator = build_memory_locator(
+            {
+                "id": "memory-2",
+                "sourceAnnotationId": "annotation-legacy",
+                "blockId": "block-legacy",
+                "quote": "legacy quote",
+                "locator": {
+                    "view": "bilingual",
+                    "blockId": "block-9",
+                    "quote": "locator quote",
+                },
+                "anchor": {
+                    "view": "linearized",
+                    "contextBefore": "before",
+                    "contextAfter": "after",
+                },
+            }
+        )
+
+        self.assertEqual(
+            locator,
+            {
+                "view": "bilingual",
+                "blockId": "block-9",
+                "quote": "locator quote",
+            },
+        )
+
+    def test_build_memory_locator_falls_back_to_anchor_quote(self):
+        locator = build_memory_locator(
+            {
+                "id": "memory-3",
+                "sourceAnnotationId": "annotation-5",
+                "blockId": "block-5",
+                "anchor": {
+                    "view": "linearized",
+                    "quote": "anchor quote",
+                    "contextBefore": "Leading context",
+                    "contextAfter": "Trailing context",
+                },
+            }
+        )
+
+        self.assertEqual(
+            locator,
+            {
+                "view": "linearized",
+                "annotationId": "annotation-5",
+                "memoryItemId": "memory-3",
+                "blockId": "block-5",
+                "quote": "anchor quote",
+                "contextBefore": "Leading context",
+                "contextAfter": "Trailing context",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,6 +89,63 @@ class GuiAgentMemoryTest(unittest.TestCase):
             self.assertEqual(relevant[0]["id"], active["id"])
             self.assertNotIn(candidate["id"], [item["id"] for item in relevant])
 
+    def test_duplicate_agent_memory_is_merged_instead_of_created(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory_root = Path(temp_dir)
+            first = gui_agent_memory.create_agent_memory_item(
+                memory_root,
+                {
+                    "type": "project",
+                    "text": "Need a durable evidence-first product loop.",
+                    "tags": ["product"],
+                },
+            )
+            merged = gui_agent_memory.create_agent_memory_item(
+                memory_root,
+                {
+                    "type": "project",
+                    "text": " Need  a durable evidence-first product loop. ",
+                    "tags": ["loop"],
+                    "evidence": [{"kind": "conversation", "quote": "evidence-first"}],
+                },
+            )
+
+            items = gui_agent_memory.load_agent_memory_items(memory_root, include_archived=True)
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(merged["id"], first["id"])
+            self.assertEqual(merged["tags"], ["product", "loop"])
+            self.assertEqual(merged["evidence"][0]["quote"], "evidence-first")
+            self.assertEqual(merged["revisionHistory"][0]["reason"], "duplicate")
+
+    def test_agent_memory_conflict_links_are_written_bidirectionally_on_create(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            memory_root = Path(temp_dir)
+            left = gui_agent_memory.create_agent_memory_item(
+                memory_root,
+                {
+                    "type": "concept",
+                    "text": "CLI first execution loop.",
+                },
+            )
+            right = gui_agent_memory.create_agent_memory_item(
+                memory_root,
+                {
+                    "type": "concept",
+                    "text": "GUI first execution loop.",
+                    "conflictsWith": [left["id"]],
+                },
+            )
+
+            items = {
+                item["id"]: item
+                for item in gui_agent_memory.load_agent_memory_items(memory_root, include_archived=True)
+            }
+
+            self.assertEqual(right["conflictsWith"], [left["id"]])
+            self.assertIn(right["id"], items[left["id"]]["conflictsWith"])
+            self.assertEqual(items[left["id"]]["revisionHistory"][0]["reason"], "conflict-link")
+
     def test_agent_memory_file_uses_schema_version_and_backup_fallback(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             memory_root = Path(temp_dir)

@@ -148,6 +148,59 @@ class WorkbenchStoreTests(unittest.TestCase):
         self.assertEqual(results[0]["source"], "memory")
         self.assertEqual(results[0]["memoryItemId"], "memory-1")
 
+    def test_replace_search_entries_for_papers_only_updates_target_paper(self):
+        entries = [
+            {
+                "id": "paper-1:title:title",
+                "paperId": "paper-1",
+                "paperTitle": "Paper One",
+                "source": "title",
+                "sourceLabel": "标题",
+                "view": None,
+                "annotationId": None,
+                "memoryItemId": None,
+                "text": "Paper One",
+                "haystack": "paper one",
+            },
+            {
+                "id": "paper-2:title:title",
+                "paperId": "paper-2",
+                "paperTitle": "Paper Two",
+                "source": "title",
+                "sourceLabel": "标题",
+                "view": None,
+                "annotationId": None,
+                "memoryItemId": None,
+                "text": "Paper Two",
+                "haystack": "paper two",
+            },
+        ]
+        self.store.replace_search_entries(entries, "2026-06-18T00:00:00")
+        self.store.replace_search_entries_for_papers(
+            ["paper-1"],
+            [
+                {
+                    "id": "paper-1:memory:memory-1",
+                    "paperId": "paper-1",
+                    "paperTitle": "Paper One",
+                    "source": "memory",
+                    "sourceLabel": "记忆",
+                    "view": "linearized",
+                    "annotationId": None,
+                    "memoryItemId": "memory-1",
+                    "text": "Updated memory",
+                    "haystack": "paper one updated memory",
+                }
+            ],
+            "2026-06-19T00:00:00",
+        )
+
+        paper_one_results = self.store.search_search_entries(["updated"], limit=10)
+        paper_two_results = self.store.search_search_entries(["two"], limit=10)
+
+        self.assertEqual([item["paperId"] for item in paper_one_results or []], ["paper-1"])
+        self.assertEqual([item["paperId"] for item in paper_two_results or []], ["paper-2"])
+
     def test_paper_sync_removes_missing_records(self):
         first = {
             "id": "paper-1",

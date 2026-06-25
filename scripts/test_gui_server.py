@@ -44,6 +44,7 @@ class FakeStore:
     def __init__(self, events=None):
         self.interrupted_calls = []
         self.events = events
+        self.papers = []
 
     def mark_orphaned_active_tasks_interrupted(self, owner_id, updated_at):
         if self.events is not None:
@@ -51,9 +52,18 @@ class FakeStore:
         self.interrupted_calls.append((owner_id, updated_at))
         return 0
 
-    def sync_papers(self, _papers, _indexed_at):
+    def list_papers(self):
+        return list(self.papers)
+
+    def upsert_papers(self, papers, _indexed_at):
+        if self.events is not None:
+            self.events.append("upsert")
+        self.papers = list(papers)
+
+    def sync_papers(self, papers, _indexed_at):
         if self.events is not None:
             self.events.append("sync")
+        self.papers = list(papers)
 
 
 class FakeServer:
@@ -132,7 +142,7 @@ class GuiServerStartupTests(unittest.TestCase):
         self.assertIs(prepared_lock, lock)
         self.assertEqual(interrupted, 0)
         self.assertEqual(copilot_recovery, {"resumed": 0, "expired": 0})
-        self.assertEqual(events, ["bind", "mark", "sync"])
+        self.assertEqual(events, ["bind", "mark"])
         prepared.server_close()
         prepared_lock.release()
 

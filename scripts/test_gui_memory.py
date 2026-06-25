@@ -181,6 +181,68 @@ class GuiMemoryTests(unittest.TestCase):
             self.assertEqual(payload["activeCount"], 1)
             self.assertEqual(payload["candidateItems"][0]["id"], candidate["id"])
 
+    def test_duplicate_memory_item_is_merged_instead_of_created(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            record = fake_record()
+            first = create_memory_item(
+                record,
+                root,
+                {
+                    "type": "insight",
+                    "text": "Reusable method judgment",
+                    "tags": ["method"],
+                },
+            )
+            merged = create_memory_item_from_annotation(
+                record,
+                root,
+                {
+                    "id": "annotation-1",
+                    "view": "linearized",
+                    "quote": "Reusable method judgment",
+                    "contextBefore": "Before",
+                    "contextAfter": "After",
+                    "anchorTop": 12,
+                    "anchorHeight": 20,
+                },
+                {
+                    "type": "insight",
+                    "text": "  Reusable   method judgment ",
+                    "tags": ["evidence"],
+                },
+            )
+
+            items = load_memory_items(record, root)
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(merged["id"], first["id"])
+            self.assertEqual(merged["tags"], ["method", "evidence"])
+            self.assertEqual(merged["sourceAnnotationId"], "annotation-1")
+            self.assertEqual(merged["evidence"][0]["annotationId"], "annotation-1")
+            self.assertEqual(merged["revisionHistory"][0]["reason"], "duplicate")
+
+    def test_conflict_links_are_written_bidirectionally_on_create(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            record = fake_record()
+            left = create_memory_item(record, root, {"type": "question", "text": "Adopt method A?"})
+            right = create_memory_item(
+                record,
+                root,
+                {
+                    "type": "question",
+                    "text": "Adopt method B?",
+                    "conflictsWith": [left["id"]],
+                },
+            )
+
+            items = {item["id"]: item for item in load_memory_items(record, root)}
+
+            self.assertEqual(right["conflictsWith"], [left["id"]])
+            self.assertIn(right["id"], items[left["id"]]["conflictsWith"])
+            self.assertEqual(items[left["id"]]["revisionHistory"][0]["reason"], "conflict-link")
+
     def test_memory_item_id_cannot_escape_notes_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

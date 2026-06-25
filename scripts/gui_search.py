@@ -61,94 +61,112 @@ def build_search_index(
 ) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     for record in records:
-        entries.append(
-            make_entry(
+        entries.extend(
+            build_record_search_index(
                 record,
-                source="title",
-                source_id="title",
-                text=str(record.title),
-                view=None,
+                memory_root=memory_root,
+                load_markdown=load_markdown,
+                load_annotations=load_annotations,
             )
         )
+    return entries
 
-        files = getattr(record, "files", {}) or {}
-        for view in ("linearized", "bilingual"):
-            markdown = load_markdown(files.get(view))
-            if markdown:
-                entries.append(
-                    make_entry(
-                        record,
-                        source="body",
-                        source_id=view,
-                        text=markdown,
-                        view=view,
-                        locator=gui_locator.build_locator(view=view),
-                    )
-                )
 
-        for annotation in load_annotations(record):
-            annotation_id = optional_string(annotation.get("id"))
-            comments = annotation.get("comments")
-            comment_text = ""
-            if isinstance(comments, list):
-                comment_text = " ".join(
-                    str(comment.get("content") or "")
-                    for comment in comments
-                    if isinstance(comment, dict)
+def build_record_search_index(
+    record: Any,
+    *,
+    memory_root: Path,
+    load_markdown: SearchMarkdownLoader,
+    load_annotations: SearchAnnotationLoader,
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = [
+        make_entry(
+            record,
+            source="title",
+            source_id="title",
+            text=str(record.title),
+            view=None,
+        )
+    ]
+
+    files = getattr(record, "files", {}) or {}
+    for view in ("linearized", "bilingual"):
+        markdown = load_markdown(files.get(view))
+        if markdown:
+            entries.append(
+                make_entry(
+                    record,
+                    source="body",
+                    source_id=view,
+                    text=markdown,
+                    view=view,
+                    locator=gui_locator.build_locator(view=view),
                 )
-            text = " ".join(
-                part
-                for part in [
-                    optional_string(annotation.get("quote")),
-                    optional_string(annotation.get("contextBefore")),
-                    optional_string(annotation.get("contextAfter")),
-                    comment_text,
-                ]
-                if part
             )
-            if text:
-                entries.append(
-                    make_entry(
-                        record,
-                        source="annotation",
-                        source_id=annotation_id or "annotation",
-                        text=text,
-                        view=optional_string(annotation.get("view")),
-                        annotation_id=annotation_id,
-                        locator=gui_locator.normalize_locator(
-                            annotation.get("locator"),
-                            default=gui_locator.build_annotation_locator(annotation),
-                        ),
-                    )
-                )
 
-        for item in gui_memory.load_memory_items(record, memory_root):
-            if not gui_memory.is_behavioral_memory_item(item):
-                continue
-            item_id = optional_string(item.get("id"))
-            text = " ".join(
-                part
-                for part in [
-                    optional_string(item.get("text")),
-                    optional_string(item.get("quote")),
-                    " ".join(str(tag) for tag in item.get("tags", []) if isinstance(tag, str)),
-                    optional_string(item.get("type")),
-                ]
-                if part
+    for annotation in load_annotations(record):
+        annotation_id = optional_string(annotation.get("id"))
+        comments = annotation.get("comments")
+        comment_text = ""
+        if isinstance(comments, list):
+            comment_text = " ".join(
+                str(comment.get("content") or "")
+                for comment in comments
+                if isinstance(comment, dict)
             )
-            if text:
-                entries.append(
-                    make_entry(
-                        record,
-                        source="memory",
-                        source_id=item_id or "memory",
-                        text=text,
-                        view=extract_memory_view(item),
-                        annotation_id=optional_string(item.get("sourceAnnotationId")),
-                        memory_item_id=item_id,
-                        locator=gui_locator.build_memory_locator(item),
-                    )
+        text = " ".join(
+            part
+            for part in [
+                optional_string(annotation.get("quote")),
+                optional_string(annotation.get("contextBefore")),
+                optional_string(annotation.get("contextAfter")),
+                comment_text,
+            ]
+            if part
+        )
+        if text:
+            entries.append(
+                make_entry(
+                    record,
+                    source="annotation",
+                    source_id=annotation_id or "annotation",
+                    text=text,
+                    view=optional_string(annotation.get("view")),
+                    annotation_id=annotation_id,
+                    locator=gui_locator.normalize_locator(
+                        annotation.get("locator"),
+                        default=gui_locator.build_annotation_locator(annotation),
+                    ),
                 )
+            )
+
+    for item in gui_memory.load_memory_items(record, memory_root):
+        if not gui_memory.is_behavioral_memory_item(item):
+            continue
+        item_id = optional_string(item.get("id"))
+        text = " ".join(
+            part
+            for part in [
+                optional_string(item.get("text")),
+                optional_string(item.get("quote")),
+                " ".join(str(tag) for tag in item.get("tags", []) if isinstance(tag, str)),
+                optional_string(item.get("type")),
+            ]
+            if part
+        )
+        if text:
+            entries.append(
+                make_entry(
+                    record,
+                    source="memory",
+                    source_id=item_id or "memory",
+                    text=text,
+                    view=extract_memory_view(item),
+                    annotation_id=optional_string(item.get("sourceAnnotationId")),
+                    memory_item_id=item_id,
+                    locator=gui_locator.build_memory_locator(item),
+                )
+            )
     return entries
 
 

@@ -129,3 +129,75 @@ def append_revision_snapshot(
 ) -> list[dict[str, object]]:
     next_history = [snapshot, *history]
     return next_history[:limit]
+
+
+def normalize_memory_text(value: object) -> str | None:
+    text = optional_string(value)
+    if not text:
+        return None
+    return " ".join(text.split())
+
+
+def canonical_memory_text(value: object) -> str:
+    normalized = normalize_memory_text(value)
+    if not normalized:
+        return ""
+    return normalized.casefold()
+
+
+def merge_unique_strings(*values: object, limit: int) -> list[str]:
+    items: list[str] = []
+    for value in values:
+        if isinstance(value, list):
+            candidates = value
+        else:
+            candidates = [value]
+        for candidate in candidates:
+            normalized = normalize_memory_text(candidate)
+            if not normalized or normalized in items:
+                continue
+            items.append(normalized)
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def merge_reference_ids(*values: object, limit: int = 12) -> list[str]:
+    items: list[str] = []
+    for value in values:
+        for item in normalize_reference_ids(value, limit=limit):
+            if item in items:
+                continue
+            items.append(item)
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def merge_sources(*values: object) -> dict[str, object] | None:
+    merged: dict[str, object] = {}
+    for value in values:
+        normalized = normalize_source(value)
+        if not normalized:
+            continue
+        merged.update(normalized)
+    return merged or None
+
+
+def merge_evidence_lists(*values: object, limit: int = 8) -> list[dict[str, object]]:
+    raw_items: list[object] = []
+    for value in values:
+        if isinstance(value, list):
+            raw_items.extend(value)
+    return normalize_evidence(raw_items, limit=limit)
+
+
+def prefer_activation_status(*values: object, default: str = "active") -> str:
+    statuses = [normalize_activation_status(value, default=default) for value in values]
+    if "active" in statuses:
+        return "active"
+    if "candidate" in statuses:
+        return "candidate"
+    if "archived" in statuses:
+        return "archived"
+    return default

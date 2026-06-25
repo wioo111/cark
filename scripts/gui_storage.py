@@ -449,30 +449,25 @@ class WorkbenchStore:
             return
         with self._lock, self._connection() as connection:
             connection.execute("DELETE FROM search_entries_fts")
-            connection.executemany(
-                """
-                INSERT INTO search_entries_fts (
-                    id, paper_id, paper_title, source, source_label, view,
-                    annotation_id, memory_item_id, text, haystack, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        str(entry.get("id") or ""),
-                        str(entry.get("paperId") or ""),
-                        str(entry.get("paperTitle") or ""),
-                        str(entry.get("source") or ""),
-                        str(entry.get("sourceLabel") or ""),
-                        str(entry.get("view") or "") or None,
-                        str(entry.get("annotationId") or "") or None,
-                        str(entry.get("memoryItemId") or "") or None,
-                        str(entry.get("text") or ""),
-                        str(entry.get("haystack") or _normalize_search_text(f"{entry.get('paperTitle') or ''} {entry.get('text') or ''}")),
-                        indexed_at,
-                    )
-                    for entry in entries
-                ],
-            )
+            self._insert_search_entries(connection, entries, indexed_at)
+
+    def replace_search_entries_for_papers(
+        self,
+        paper_ids: list[str],
+        entries: list[dict[str, object]],
+        indexed_at: str,
+    ):
+        if not self._fts_enabled:
+            return
+        normalized_paper_ids = [paper_id.strip() for paper_id in paper_ids if isinstance(paper_id, str) and paper_id.strip()]
+        with self._lock, self._connection() as connection:
+            if normalized_paper_ids:
+                placeholders = ", ".join("?" for _ in normalized_paper_ids)
+                connection.execute(
+                    f"DELETE FROM search_entries_fts WHERE paper_id IN ({placeholders})",
+                    normalized_paper_ids,
+                )
+            self._insert_search_entries(connection, entries, indexed_at)
 
     def search_search_entries(self, terms: list[str], limit: int = 80) -> list[dict[str, object]] | None:
         if not self._fts_enabled:
@@ -521,6 +516,37 @@ class WorkbenchStore:
             }
             for row in rows
         ]
+
+    def _insert_search_entries(
+        self,
+        connection: sqlite3.Connection,
+        entries: list[dict[str, object]],
+        indexed_at: str,
+    ):
+        connection.executemany(
+            """
+            INSERT INTO search_entries_fts (
+                id, paper_id, paper_title, source, source_label, view,
+                annotation_id, memory_item_id, text, haystack, indexed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    str(entry.get("id") or ""),
+                    str(entry.get("paperId") or ""),
+                    str(entry.get("paperTitle") or ""),
+                    str(entry.get("source") or ""),
+                    str(entry.get("sourceLabel") or ""),
+                    str(entry.get("view") or "") or None,
+                    str(entry.get("annotationId") or "") or None,
+                    str(entry.get("memoryItemId") or "") or None,
+                    str(entry.get("text") or ""),
+                    str(entry.get("haystack") or _normalize_search_text(f"{entry.get('paperTitle') or ''} {entry.get('text') or ''}")),
+                    indexed_at,
+                )
+                for entry in entries
+            ],
+        )
 
     def record_zotero_import(
         self,

@@ -160,6 +160,101 @@ def build_memory_payload(record: Any, memory_root: Path) -> dict[str, object]:
     }
 
 
+def find_duplicate_memory_item(
+    items: list[dict[str, object]],
+    candidate: dict[str, object],
+    *,
+    exclude_id: str | None = None,
+) -> dict[str, object] | None:
+    candidate_text = gui_memory_engine.canonical_memory_text(candidate.get("text"))
+    candidate_type = str(candidate.get("type") or "")
+    if not candidate_text or not candidate_type:
+        return None
+    for item in items:
+        if exclude_id and str(item.get("id")) == exclude_id:
+            continue
+        if str(item.get("type") or "") != candidate_type:
+            continue
+        if gui_memory_engine.canonical_memory_text(item.get("text")) == candidate_text:
+            return item
+    return None
+
+
+def merge_duplicate_memory_item(
+    record: Any,
+    existing: dict[str, object],
+    incoming: dict[str, object],
+) -> dict[str, object]:
+    normalized_existing = normalize_memory_item(record, existing, fallback_id=str(existing.get("id") or ""))
+    existing_status = str(existing.get("status") or "active")
+    incoming_status = str(incoming.get("status") or existing_status)
+    merged = {
+        **existing,
+        "updatedAt": incoming.get("updatedAt") or current_timestamp_iso(),
+        "status": incoming_status if existing_status == "archived" and incoming_status != "archived" else existing_status,
+        "activationStatus": gui_memory_engine.prefer_activation_status(
+            existing.get("activationStatus"),
+            incoming.get("activationStatus"),
+            default="active",
+        ),
+        "confidence": max(
+            gui_memory_engine.normalize_confidence(existing.get("confidence"), default=0.0),
+            gui_memory_engine.normalize_confidence(incoming.get("confidence"), default=0.0),
+        ),
+        "tags": gui_memory_engine.merge_unique_strings(existing.get("tags"), incoming.get("tags"), limit=6),
+        "source": gui_memory_engine.merge_sources(existing.get("source"), incoming.get("source")),
+        "evidence": gui_memory_engine.merge_evidence_lists(existing.get("evidence"), incoming.get("evidence"), limit=8),
+        "derivedFrom": gui_memory_engine.merge_reference_ids(existing.get("derivedFrom"), incoming.get("derivedFrom"), limit=12),
+        "conflictsWith": gui_memory_engine.merge_reference_ids(
+            existing.get("conflictsWith"),
+            incoming.get("conflictsWith"),
+            limit=12,
+        ),
+    }
+    for key in ("sourceAnnotationId", "quote", "anchor", "blockId", "blockPreview", "locator"):
+        if merged.get(key) is None and incoming.get(key) is not None:
+            merged[key] = incoming.get(key)
+    item = normalize_memory_item(record, merged, fallback_id=str(existing.get("id") or ""))
+    if has_material_memory_change(normalized_existing, item):
+        item["revisionHistory"] = gui_memory_engine.append_revision_snapshot(
+            item.get("revisionHistory") if isinstance(item.get("revisionHistory"), list) else [],
+            gui_memory_engine.build_revision_snapshot(normalized_existing, reason="duplicate"),
+        )
+    return item
+
+
+def build_conflict_link_updates(
+    record: Any,
+    items: list[dict[str, object]],
+    item: dict[str, object],
+) -> list[dict[str, object]]:
+    item_id = str(item.get("id") or "")
+    if not item_id:
+        return []
+    conflict_ids = set(gui_memory_engine.normalize_reference_ids(item.get("conflictsWith"), limit=12))
+    if not conflict_ids:
+        return []
+    updates: list[dict[str, object]] = []
+    for existing in items:
+        existing_id = str(existing.get("id") or "")
+        if not existing_id or existing_id == item_id or existing_id not in conflict_ids:
+            continue
+        normalized_existing = normalize_memory_item(record, existing, fallback_id=existing_id)
+        merged = {
+            **existing,
+            "updatedAt": item.get("updatedAt") or current_timestamp_iso(),
+            "conflictsWith": gui_memory_engine.merge_reference_ids(existing.get("conflictsWith"), [item_id], limit=12),
+        }
+        updated = normalize_memory_item(record, merged, fallback_id=existing_id)
+        if has_material_memory_change(normalized_existing, updated):
+            updated["revisionHistory"] = gui_memory_engine.append_revision_snapshot(
+                updated.get("revisionHistory") if isinstance(updated.get("revisionHistory"), list) else [],
+                gui_memory_engine.build_revision_snapshot(normalized_existing, reason="conflict-link"),
+            )
+        updates.append(updated)
+    return updates
+
+
 def create_memory_note(record: Any, memory_root: Path, payload: dict[str, object]) -> dict[str, object]:
     return create_memory_item(record, memory_root, {**payload, "type": payload.get("type") or "note"})
 
@@ -177,7 +272,14 @@ def create_memory_item(record: Any, memory_root: Path, payload: dict[str, object
             "updatedAt": timestamp,
         },
     )
+    existing_items = load_memory_items(record, memory_root)
+    duplicate = find_duplicate_memory_item(existing_items, item, exclude_id=str(item["id"]))
+    if duplicate is not None:
+        item = merge_duplicate_memory_item(record, duplicate, item)
+    related_updates = build_conflict_link_updates(record, existing_items, item)
     write_json_file(memory_item_file_path(record, memory_root, str(item["id"])), item)
+    for updated in related_updates:
+        write_json_file(memory_item_file_path(record, memory_root, str(updated["id"])), updated)
     return item
 
 

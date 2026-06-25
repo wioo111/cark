@@ -37,6 +37,10 @@ config/mineru.json
 runtime/*
 !runtime/.gitkeep
 
+# ===== 本地论文记忆/示例资料副本（运行或调试时生成，不提交） =====
+papers/
+gui/papers/
+
 # ===== 操作系统 =====
 Thumbs.db
 .DS_Store
