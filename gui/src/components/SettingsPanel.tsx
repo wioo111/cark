@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, ChevronDown, ExternalLink, LoaderCircle, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
+import { Bot, CheckCircle2, ChevronDown, Copy, ExternalLink, LoaderCircle, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { fetchSettings, postSettingsConnectionTest, saveSettings } from '@/api'
@@ -17,8 +17,8 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
   const [saving, setSaving] = useState(false)
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [testing, setTesting] = useState<'mineru' | 'translation' | null>(null)
-  const [testResults, setTestResults] = useState<Partial<Record<'mineru' | 'translation', ConnectionTestResult>>>({})
+  const [testing, setTesting] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, ConnectionTestResult | undefined>>({})
 
   useEffect(() => {
     if (open) {
@@ -51,6 +51,21 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
     })
   }
 
+  function copyAgent(agent: CopilotAgentConfig, index: number) {
+    updateDraft('copilot', {
+      agents: [
+        ...draft.copilot.agents.slice(0, index + 1),
+        {
+          ...agent,
+          id: `agent-${Date.now()}-${index + 1}-copy`,
+          enabled: false,
+          name: `${agent.name.trim() || `共读助手 ${index + 1}`} 副本`,
+        },
+        ...draft.copilot.agents.slice(index + 1),
+      ],
+    })
+  }
+
   function removeAgent(agentId: string) {
     const nextAgents = draft.copilot.agents.filter((agent) => agent.id !== agentId)
     updateDraft('copilot', {
@@ -59,6 +74,11 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
   }
 
   async function handleSave() {
+    const invalidAgent = draft.copilot.agents.find((agent) => agent.enabled && getAgentMissingFields(agent).length > 0)
+    if (invalidAgent) {
+      setError(`“${invalidAgent.name.trim() || '未命名智能体'}”已启用，但缺少：${getAgentMissingFields(invalidAgent).join('、')}。补齐后再保存，或先关闭启用。`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -95,6 +115,40 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
       setTestResults((current) => ({
         ...current,
         [target]: {
+          ok: false,
+          message: testError instanceof Error ? testError.message : '连接测试失败',
+          detail: null,
+        },
+      }))
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  async function handleAgentTest(agent: CopilotAgentConfig) {
+    const testKey = agentTestKey(agent.id)
+    const missingFields = getAgentMissingFields(agent)
+    if (missingFields.length > 0) {
+      setTestResults((current) => ({
+        ...current,
+        [testKey]: {
+          ok: false,
+          message: `先补齐：${missingFields.join('、')}`,
+          detail: null,
+        },
+      }))
+      return
+    }
+
+    setTesting(testKey)
+    setTestResults((current) => ({ ...current, [testKey]: undefined }))
+    try {
+      const result = await postSettingsConnectionTest('copilot_agent', draft, { agentId: agent.id })
+      setTestResults((current) => ({ ...current, [testKey]: result }))
+    } catch (testError) {
+      setTestResults((current) => ({
+        ...current,
+        [testKey]: {
           ok: false,
           message: testError instanceof Error ? testError.message : '连接测试失败',
           detail: null,
@@ -351,7 +405,14 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                       </div>
                       <div>
                         <p className="cark-faint text-xs uppercase tracking-[0.18em]">智能体 {index + 1}</p>
-                        <p className="cark-text mt-1 text-sm">用于评论区召唤，围绕划线句子给出角色化共读意见。</p>
+                        <p className="cark-text mt-1 text-sm">{agent.description?.trim() || '用于评论区召唤，围绕划线句子给出角色化共读意见。'}</p>
+                        <p className={`mt-2 text-xs ${agent.enabled && getAgentMissingFields(agent).length === 0 ? 'text-emerald-300' : 'text-amber-200'}`}>
+                          {agent.enabled
+                            ? getAgentMissingFields(agent).length === 0
+                              ? '已启用，可用于共读'
+                              : `已启用但缺少：${getAgentMissingFields(agent).join('、')}`
+                            : '已禁用，配置会保留但不会出现在共读入口'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
@@ -364,6 +425,23 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                         />
                         启用
                       </label>
+                      <button
+                        type="button"
+                        onClick={() => void handleAgentTest(agent)}
+                        disabled={testing === agentTestKey(agent.id)}
+                        className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs disabled:opacity-60"
+                      >
+                        {testing === agentTestKey(agent.id) ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        测试智能体
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyAgent(agent, index)}
+                        className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        复制
+                      </button>
                       <button
                         type="button"
                         onClick={() => removeAgent(agent.id)}
@@ -384,6 +462,7 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                     <TextField
                       label="模型"
                       value={agent.model}
+                      placeholder="例如 openai/gpt-4.1-mini"
                       onChange={(value) => updateAgent(agent.id, { model: value })}
                     />
                     <TextField
@@ -399,6 +478,13 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                     />
                   </div>
 
+                  <TextField
+                    label="用途说明"
+                    value={agent.description ?? ''}
+                    placeholder="例如：重点检查方法、限制和可复用判断。"
+                    onChange={(value) => updateAgent(agent.id, { description: value })}
+                  />
+
                   <label className="cark-text mt-4 grid gap-2 text-sm">
                     身份注入
                     <textarea
@@ -408,6 +494,12 @@ export function SettingsPanel({ open, settings, capabilities, onClose, onSaved }
                       className="cark-input min-h-[132px] resize-y rounded-[18px] px-3 py-3 text-sm leading-7 outline-none"
                     />
                   </label>
+
+                  {testResults[agentTestKey(agent.id)] ? (
+                    <p className={`mt-3 text-xs ${testResults[agentTestKey(agent.id)]?.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {testResults[agentTestKey(agent.id)]?.message}
+                    </p>
+                  ) : null}
                 </section>
               ))}
             </div>
@@ -449,6 +541,7 @@ function createCopilotAgent(index: number): CopilotAgentConfig {
     id: `agent-${Date.now()}-${index}`,
     enabled: true,
     name: `共读助手 ${index}`,
+    description: '围绕划线句子解释、质疑，并沉淀可复用研究判断。',
     rolePrompt: '你是用户的论文共读伙伴。先完整理解论文，再围绕用户划线句子的上下文给出具体、克制、有判断的评论。',
     apiKey: '',
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -530,11 +623,13 @@ function TextField({
   value,
   onChange,
   type = 'text',
+  placeholder,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   type?: string
+  placeholder?: string
 }) {
   return (
     <label className="cark-text grid gap-2 text-sm">
@@ -545,9 +640,34 @@ function TextField({
         min={type === 'number' ? 0 : undefined}
         max={type === 'number' ? 1 : undefined}
         step={type === 'number' ? 0.05 : undefined}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         className="cark-input rounded-[18px] px-3 py-3 outline-none"
       />
     </label>
   )
+}
+
+function agentTestKey(agentId: string) {
+  return `agent:${agentId}`
+}
+
+function getAgentMissingFields(agent: CopilotAgentConfig) {
+  const missing: string[] = []
+  if (!agent.name.trim()) {
+    missing.push('名称')
+  }
+  if (!agent.rolePrompt.trim()) {
+    missing.push('身份注入')
+  }
+  if (!agent.apiKey.trim()) {
+    missing.push('API Key')
+  }
+  if (!agent.baseUrl.trim()) {
+    missing.push('Base URL')
+  }
+  if (!agent.model.trim()) {
+    missing.push('模型')
+  }
+  return missing
 }

@@ -16,8 +16,10 @@ import {
   postCopilotRun,
   postPaperMemoryMarkdownExport,
   postRetryCopilotRun,
+  postSettingsConnectionTest,
   saveReadingState,
 } from '@/api'
+import type { AppSettings } from '@/types'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -328,5 +330,93 @@ describe('search api', () => {
     await fetchSearchResults('situated action', 12)
 
     expect(fetchMock).toHaveBeenCalledWith('/api/search?q=situated+action&limit=12', undefined)
+  })
+})
+
+describe('settings api', () => {
+  it('tests a selected copilot agent', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, message: 'ok' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const settings: AppSettings = {
+      mineru: {
+        backend: 'local',
+        modelVersion: 'pipeline',
+        parseMethod: 'auto',
+        apiToken: '',
+        reuseExistingParse: true,
+      },
+      translation: {
+        enabled: false,
+        apiKey: '',
+        baseUrl: 'https://api.deepseek.com/v1',
+        model: 'deepseek-chat',
+        failRatioLimit: 0.2,
+      },
+      publish: {
+        prepareOnly: true,
+        imageMode: 'note',
+        folderToken: '',
+        appId: '',
+        appSecret: '',
+      },
+      copilot: {
+        agents: [],
+      },
+    }
+
+    await postSettingsConnectionTest('copilot_agent', settings, { agentId: 'agent-a' })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/test',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          target: 'copilot_agent',
+          settings,
+          agentId: 'agent-a',
+        }),
+      }),
+    )
+  })
+
+  it('uses server message text when a connection test fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      text: async () => JSON.stringify({ ok: false, message: '请先补齐智能体配置：模型' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      postSettingsConnectionTest('copilot_agent', {
+        mineru: {
+          backend: 'local',
+          modelVersion: 'pipeline',
+          parseMethod: 'auto',
+          apiToken: '',
+          reuseExistingParse: true,
+        },
+        translation: {
+          enabled: false,
+          apiKey: '',
+          baseUrl: 'https://api.deepseek.com/v1',
+          model: 'deepseek-chat',
+          failRatioLimit: 0.2,
+        },
+        publish: {
+          prepareOnly: true,
+          imageMode: 'note',
+          folderToken: '',
+          appId: '',
+          appSecret: '',
+        },
+        copilot: {
+          agents: [],
+        },
+      }),
+    ).rejects.toThrow('请先补齐智能体配置：模型')
   })
 })

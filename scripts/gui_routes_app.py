@@ -86,7 +86,7 @@ def handle_post(
     read_binary_body: Callable[[], bytes],
     save_settings: Callable[[dict[str, object]], dict[str, object]],
     create_agent_memory_item: Callable[[dict[str, object]], dict[str, object]],
-    run_connection_test: Callable[[str, dict[str, object]], dict[str, object]],
+    run_connection_test: Callable[..., dict[str, object]],
     ensure_upload_ready: Callable[[], None],
     create_upload_task: Callable[[str, bytes], dict[str, object]],
     import_zotero_paper: Callable[[str], dict[str, object]],
@@ -134,11 +134,12 @@ def handle_post(
     if parsed.path == "/api/settings/test":
         payload = read_json_body()
         target = payload.get("target")
+        agent_id = payload.get("agentId")
         settings_payload = payload.get("settings")
         if not isinstance(target, str) or not isinstance(settings_payload, dict):
             handler.write_json({"error": "参数错误"}, status=HTTPStatus.BAD_REQUEST)
             return True
-        result = run_connection_test(target, settings_payload)
+        result = run_connection_test(target, settings_payload, agent_id if isinstance(agent_id, str) else None)
         status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
         handler.write_json(result, status=status)
         return True

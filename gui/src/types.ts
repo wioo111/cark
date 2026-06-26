@@ -512,6 +512,7 @@ export interface CopilotAgentConfig {
   id: string
   enabled: boolean
   name: string
+  description?: string
   rolePrompt: string
   apiKey: string
   baseUrl: string
@@ -550,6 +551,8 @@ export interface ConnectionTestResult {
   message: string
   detail?: string | null
 }
+
+export type SettingsConnectionTestTarget = 'mineru' | 'translation' | 'copilot_agent'
 
 export interface AppCapabilities {
   ready: boolean
