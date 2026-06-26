@@ -4,11 +4,13 @@ import {
   fetchSearchResults,
   fetchAgentMemory,
   fetchMemoryCandidates,
+  fetchMemoryResearchState,
   patchAgentMemoryItem,
   patchPaperLibrary,
   postActivateMemoryCandidate,
   postAgentMemoryItem,
   postArchiveMemoryCandidate,
+  postAnnotationMemoryCandidates,
   postAnnotationMemoryItem,
   postCancelCopilotRun,
   postCopilotRun,
@@ -112,17 +114,23 @@ describe('paper memory api', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await fetchMemoryCandidates()
+    await fetchMemoryResearchState()
     await postActivateMemoryCandidate('memory-1')
     await postArchiveMemoryCandidate('memory-2')
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/memory/candidates', undefined)
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
+      '/api/memory/research-state',
+      undefined,
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
       '/api/memory/candidates/memory-1/activate',
       expect.objectContaining({ method: 'POST' }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      4,
       '/api/memory/candidates/memory-2/archive',
       expect.objectContaining({ method: 'POST' }),
     )
@@ -223,6 +231,7 @@ describe('copilot run api', () => {
     await postCopilotRun('paper-1', {
       annotationId: 'annotation-1',
       agentIds: ['agent-a'],
+      runMode: 'explain',
       userMessage: 'Explain this',
     })
 
@@ -233,7 +242,50 @@ describe('copilot run api', () => {
         body: JSON.stringify({
           annotationId: 'annotation-1',
           agentIds: ['agent-a'],
+          runMode: 'explain',
           userMessage: 'Explain this',
+        }),
+      }),
+    )
+  })
+
+  it('creates memory candidates from an agent comment', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ created: [] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await postAnnotationMemoryCandidates('paper-1', 'annotation-1', {
+      sourceCommentId: 'comment-1',
+      runId: 'run-1',
+      runMode: 'memory_candidate',
+      items: [
+        {
+          type: 'insight',
+          text: 'Keep this judgment',
+          tags: ['method'],
+          confidence: 0.78,
+        },
+      ],
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/papers/paper-1/annotations/annotation-1/memory-candidates',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          sourceCommentId: 'comment-1',
+          runId: 'run-1',
+          runMode: 'memory_candidate',
+          items: [
+            {
+              type: 'insight',
+              text: 'Keep this judgment',
+              tags: ['method'],
+              confidence: 0.78,
+            },
+          ],
         }),
       }),
     )

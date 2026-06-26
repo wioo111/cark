@@ -335,6 +335,100 @@ def create_memory_item_from_annotation(
     )
 
 
+def create_memory_candidates_from_agent_comment(
+    record: Any,
+    memory_root: Path,
+    annotation: dict[str, object],
+    payload: dict[str, object],
+) -> dict[str, object]:
+    annotation_id = str(annotation.get("id") or "").strip()
+    source_comment_id = optional_string(payload.get("sourceCommentId"))
+    if not annotation_id:
+        raise ValueError("annotation is missing an id")
+    if not source_comment_id:
+        raise ValueError("sourceCommentId is required")
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError("memory candidate items are required")
+
+    agent_id = optional_string(payload.get("agentId"))
+    run_id = optional_string(payload.get("runId"))
+    run_mode = optional_string(payload.get("runMode"))
+    created: list[dict[str, object]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        candidate = normalize_memory_candidate_input(raw_item)
+        if candidate is None:
+            continue
+        evidence_quote = optional_string(raw_item.get("evidenceQuote")) or optional_string(annotation.get("quote"))
+        context_before = optional_string(annotation.get("contextBefore"))
+        context_after = optional_string(annotation.get("contextAfter"))
+        created.append(
+            create_memory_item_from_annotation(
+                record,
+                memory_root,
+                annotation,
+                {
+                    "type": candidate["type"],
+                    "text": candidate["text"],
+                    "tags": candidate["tags"],
+                    "confidence": candidate["confidence"],
+                    "activationStatus": "candidate",
+                    "status": "active",
+                    "quote": evidence_quote,
+                    "source": {
+                        "kind": "agent_comment",
+                        "paperId": str(record.paper_id),
+                        "annotationId": annotation_id,
+                        "commentId": source_comment_id,
+                        "runId": run_id,
+                    },
+                    "locator": gui_locator.build_locator(
+                        view=annotation.get("view"),
+                        annotation_id=annotation_id,
+                        comment_id=source_comment_id,
+                        block_id=annotation.get("blockId"),
+                        quote=evidence_quote,
+                        context_before=context_before,
+                        context_after=context_after,
+                    ),
+                    "evidence": [
+                        {
+                            "kind": "agent_comment",
+                            "annotationId": annotation_id,
+                            "commentId": source_comment_id,
+                            "view": annotation.get("view"),
+                            "quote": evidence_quote,
+                            "contextBefore": context_before,
+                            "contextAfter": context_after,
+                            "blockId": annotation.get("blockId"),
+                        }
+                    ],
+                    "derivedFrom": [item for item in (annotation_id, source_comment_id, agent_id, run_id, run_mode) if item],
+                },
+            )
+        )
+    if not created:
+        raise ValueError("no valid memory candidate items")
+    return {"created": created}
+
+
+def normalize_memory_candidate_input(payload: dict[str, object]) -> dict[str, object] | None:
+    item_type = str(payload.get("type") or "insight").strip()
+    if item_type not in MEMORY_ITEM_TYPES:
+        item_type = "insight"
+    text = payload.get("text") if isinstance(payload.get("text"), str) else payload.get("content")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return {
+        "type": item_type,
+        "text": text.strip(),
+        "tags": normalize_string_list(payload.get("tags"), limit=6),
+        "confidence": gui_memory_engine.normalize_confidence(payload.get("confidence"), default=0.74),
+    }
+
+
 def update_memory_item(
     record: Any,
     memory_root: Path,

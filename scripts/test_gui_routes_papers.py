@@ -165,6 +165,43 @@ class GuiRoutesPapersTests(unittest.TestCase):
         refresh_index.assert_called_once_with(record)
         self.assertEqual(handler.json_calls, [([{"id": "annotation 1"}], HTTPStatus.OK)])
 
+    def test_handle_post_memory_candidates_from_agent_comment(self):
+        handler = FakeHandler()
+        record = SimpleNamespace(paper_id="paper-1")
+        annotation = {"id": "annotation 1"}
+        load_annotation = Mock(return_value=(None, annotation))
+        create_memory_candidates = Mock(return_value={"created": [{"id": "memory-1"}]})
+        refresh_index = Mock()
+        payload = {"sourceCommentId": "comment-1", "items": [{"type": "insight", "text": "Keep this"}]}
+
+        handled = gui_routes_papers.handle_post(
+            handler,
+            urlparse("/api/papers/paper-1/annotations/annotation%201/memory-candidates"),
+            payload,
+            get_record=lambda _paper_id: record,
+            create_annotation=Mock(),
+            invoke_annotation_agent=Mock(),
+            create_copilot_run=Mock(),
+            cancel_copilot_run=Mock(),
+            retry_copilot_run=Mock(),
+            export_markdown=Mock(),
+            load_annotation=load_annotation,
+            create_memory_from_annotation=Mock(),
+            append_annotation_comment=Mock(),
+            create_memory_item=Mock(),
+            create_memory_note=Mock(),
+            load_annotations=Mock(),
+            build_memory_payload=Mock(),
+            refresh_index=refresh_index,
+            create_memory_candidates_from_agent_comment=create_memory_candidates,
+        )
+
+        self.assertTrue(handled)
+        load_annotation.assert_called_once_with(record, "annotation 1")
+        create_memory_candidates.assert_called_once_with(record, annotation, payload)
+        refresh_index.assert_called_once_with(record)
+        self.assertEqual(handler.json_calls, [({"created": [{"id": "memory-1"}]}, HTTPStatus.CREATED)])
+
     def test_handle_delete_memory_refreshes_index(self):
         handler = FakeHandler()
         record = SimpleNamespace(paper_id="paper-1")

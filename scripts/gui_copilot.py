@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from pathlib import Path
@@ -371,6 +372,148 @@ def resolve_latest_user_comment_for_agent(annotation: dict[str, object], agent_i
     return None
 
 
+def build_run_mode_instruction(run_mode: str) -> str:
+    normalized = gui_copilot_runs.normalize_run_mode(run_mode)
+    if normalized == "explain":
+        return "本次动作是解释：说明划线句子在全文论证、方法或证据链中的作用。"
+    if normalized == "critique":
+        return "本次动作是质疑：指出划线句子的限制、可能反例、证据缺口或需要谨慎解释的地方。"
+    if normalized == "memory_candidate":
+        return "本次动作是沉淀：把划线句子和上下文转成可长期复用的研究记忆候选项。"
+    return "本次动作是评论：围绕划线句子给出短判断，必要时提出可沉淀的记忆候选。"
+
+
+def build_structured_output_instruction() -> str:
+    return "\n".join(
+        [
+            "请严格返回一个 JSON 对象，不要使用 Markdown 代码块，不要在 JSON 前后添加解释。",
+            '格式：{"comment":"面向用户的短评论","memoryCandidates":[{"type":"insight","text":"可长期保留的判断","tags":["method"],"confidence":0.78,"evidenceQuote":"原文证据短句"}],"openQuestions":["后续需要验证的问题"]}',
+            "comment 必须是中文短评论。memoryCandidates 只能包含值得长期保留、且能由当前证据支撑的项目；没有就返回空数组。",
+            "memoryCandidates.type 只能是 note、question、action、insight 之一。openQuestions 没有就返回空数组。",
+        ]
+    )
+
+
+def extract_json_object(text: str) -> str | None:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return None
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped).strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    return stripped[start : end + 1]
+
+
+def parse_copilot_structured_output(text: str) -> dict[str, object]:
+    raw_text = str(text or "").strip()
+    json_text = extract_json_object(raw_text)
+    if json_text is None:
+        return {
+            "structuredOutput": False,
+            "comment": raw_text,
+            "memoryCandidates": [],
+            "openQuestions": [],
+            "parseError": "not_json",
+            "rawText": raw_text,
+        }
+    try:
+        payload = json.loads(json_text)
+    except json.JSONDecodeError as error:
+        return {
+            "structuredOutput": False,
+            "comment": raw_text,
+            "memoryCandidates": [],
+            "openQuestions": [],
+            "parseError": f"invalid_json: {error.msg}",
+            "rawText": raw_text,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "structuredOutput": False,
+            "comment": raw_text,
+            "memoryCandidates": [],
+            "openQuestions": [],
+            "parseError": "json_root_not_object",
+            "rawText": raw_text,
+        }
+
+    comment = payload.get("comment")
+    normalized_comment = str(comment).strip() if isinstance(comment, str) and comment.strip() else raw_text
+    candidates: list[dict[str, object]] = []
+    raw_candidates = payload.get("memoryCandidates")
+    if isinstance(raw_candidates, list):
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
+            normalized = gui_memory.normalize_memory_candidate_input(item)
+            if normalized is None:
+                continue
+            evidence_quote = item.get("evidenceQuote")
+            if isinstance(evidence_quote, str) and evidence_quote.strip():
+                normalized["evidenceQuote"] = evidence_quote.strip()
+            candidates.append(normalized)
+            if len(candidates) >= 6:
+                break
+    return {
+        "structuredOutput": True,
+        "comment": normalized_comment,
+        "memoryCandidates": candidates,
+        "openQuestions": gui_memory.normalize_string_list(payload.get("openQuestions"), limit=6),
+        "parseError": None,
+        "rawText": raw_text,
+    }
+
+
+def render_copilot_comment(parsed: dict[str, object]) -> str:
+    comment = str(parsed.get("comment") or "").strip() or str(parsed.get("rawText") or "").strip()
+    open_questions = gui_memory.normalize_string_list(parsed.get("openQuestions"), limit=6)
+    if open_questions:
+        question_lines = "\n".join(f"- {question}" for question in open_questions)
+        comment = f"{comment}\n\n待验证问题：\n{question_lines}" if comment else f"待验证问题：\n{question_lines}"
+    return comment.strip() or "模型未返回可展示内容。"
+
+
+def create_copilot_memory_candidates(
+    record: Any,
+    memory_root: Path,
+    annotation: dict[str, object],
+    comment: dict[str, object],
+    parsed: dict[str, object],
+    *,
+    agent_id: str,
+    run_id: str | None,
+    run_mode: str,
+) -> tuple[list[dict[str, object]], list[str]]:
+    candidates = parsed.get("memoryCandidates")
+    if not isinstance(candidates, list) or not candidates:
+        return [], []
+    comment_id = str(comment.get("id") or "").strip()
+    annotation_id = str(annotation.get("id") or "").strip()
+    if not comment_id or not annotation_id:
+        return [], []
+    try:
+        payload = gui_memory.create_memory_candidates_from_agent_comment(
+            record,
+            memory_root,
+            annotation,
+            {
+                "sourceCommentId": comment_id,
+                "agentId": agent_id,
+                "runId": run_id,
+                "runMode": run_mode,
+                "items": candidates,
+            },
+        )
+    except (ValueError, FileNotFoundError) as error:
+        return [], [str(error)]
+    created = payload.get("created") if isinstance(payload, dict) else []
+    return [item for item in created if isinstance(item, dict)], []
+
+
 def build_agent_messages(
     record: Any,
     annotation: dict[str, object],
@@ -382,6 +525,7 @@ def build_agent_messages(
     follow_up_comment: dict[str, object] | None = None,
     context_cache: dict[str, object] | None = None,
     relevant_chunks: list[dict[str, object]] | None = None,
+    run_mode: str = "comment",
 ) -> list[dict[str, str]]:
     view = str(annotation.get("view") or "linearized")
     active_context_cache = context_cache or load_copilot_context_cache_func(record, view)
@@ -429,10 +573,12 @@ def build_agent_messages(
             f"当前线程最近几轮对话：\n{conversation_context}" if conversation_context else "",
             f"你上一轮的回复：{follow_up_content}" if follow_up_content else "",
             f"用户这次的问题：{user_message.strip()}" if user_message.strip() else "",
+            build_run_mode_instruction(run_mode),
             "请把焦点放在用户实际选中的这句话，不要偷换成整段概括。",
             "如果用户是在追问你上一轮的回复，先承接你上一次的判断，再直接回答这次问题。",
             "先判断这句话在全文中的作用，再围绕用户的问题，从你的角色出发给出具体看法。",
             "不要复述整篇论文，不要空泛鼓励，优先给出判断、疑点、启发或可落地的提醒。",
+            build_structured_output_instruction(),
         )
         if part
     )
@@ -511,6 +657,8 @@ def invoke_annotation_agent(
         }
 
     user_message = str(payload.get("userMessage") or "").strip()
+    run_mode = gui_copilot_runs.normalize_run_mode(payload.get("runMode"))
+    run_id = str(payload.get("runId") or "").strip() or None
     follow_up_comment = None
     follow_up_comment_id = str(payload.get("followUpCommentId") or "").strip()
     if follow_up_comment_id:
@@ -542,11 +690,14 @@ def invoke_annotation_agent(
             follow_up_comment=follow_up_comment,
             context_cache=context_cache,
             relevant_chunks=relevant_chunks,
+            run_mode=run_mode,
         ),
     )
     if should_cancel and should_cancel():
         raise RuntimeError("共读任务已取消")
 
+    parsed_output = parse_copilot_structured_output(content)
+    comment_content = render_copilot_comment(parsed_output)
     trigger_user_comment = resolve_latest_user_comment_for_agent(annotation, agent_id.strip())
     comment_payload = {
         "authorType": "agent",
@@ -558,20 +709,42 @@ def invoke_annotation_agent(
             if isinstance(chunk, dict) and str(chunk.get("id") or "").strip()
         ],
         "authorLabel": str(agent.get("name") or "共读助手").strip() or "共读助手",
-        "content": content,
+        "content": comment_content,
         "status": "ready",
     }
 
     if isinstance(annotation_id, str) and annotation_id.strip():
-        return append_annotation_comment_func(record, annotation_id.strip(), comment_payload)
-    annotation = create_annotation_func(
+        comment = append_annotation_comment_func(record, annotation_id.strip(), comment_payload)
+    else:
+        annotation = create_annotation_func(
+            record,
+            {
+                **annotation,
+                "initialComment": comment_payload,
+            },
+        )
+        comment = annotation["comments"][0]
+    created_candidates, candidate_errors = create_copilot_memory_candidates(
         record,
-        {
-            **annotation,
-            "initialComment": comment_payload,
-        },
+        memory_root,
+        annotation,
+        comment,
+        parsed_output,
+        agent_id=agent_id.strip(),
+        run_id=run_id,
+        run_mode=run_mode,
     )
-    return annotation["comments"][0]
+    memory_candidate_ids = [str(item.get("id") or "").strip() for item in created_candidates if str(item.get("id") or "").strip()]
+    if isinstance(comment, dict):
+        comment["runMode"] = run_mode
+        comment["structuredOutput"] = bool(parsed_output.get("structuredOutput"))
+        if parsed_output.get("parseError"):
+            comment["structuredOutputError"] = str(parsed_output.get("parseError"))
+        comment["openQuestions"] = gui_memory.normalize_string_list(parsed_output.get("openQuestions"), limit=6)
+        comment["memoryCandidateIds"] = memory_candidate_ids
+        comment["memoryCandidateCount"] = len(memory_candidate_ids)
+        comment["memoryCandidateErrors"] = candidate_errors
+    return comment
 
 
 def resolve_copilot_agents_for_run(
@@ -654,6 +827,7 @@ def execute_copilot_run(
         return
 
     annotation_id = str(run.get("annotationId") or "").strip()
+    run_mode = gui_copilot_runs.normalize_run_mode(run.get("runMode"))
     user_message = str(run.get("userMessage") or "").strip()
     follow_up_comment_id = str(run.get("followUpCommentId") or "").strip() or None
     follow_up_agent_id = str(run.get("FollowUpAgentId") or run.get("followUpAgentId") or "").strip() or None
@@ -688,6 +862,8 @@ def execute_copilot_run(
                 {
                     "agentId": agent_id,
                     "annotationId": annotation_id,
+                    "runId": run_id,
+                    "runMode": run_mode,
                     "userMessage": user_message,
                     "followUpCommentId": (
                         follow_up_comment_id
@@ -698,7 +874,16 @@ def execute_copilot_run(
                 should_cancel=lambda: gui_copilot_runs.is_canceled(record, memory_root, run_id),
             )
             comment_id = str(comment.get("id") or "").strip() if isinstance(comment, dict) else None
-            gui_copilot_runs.mark_agent_done(record, memory_root, run_id, agent_id, comment_id)
+            result_payload = {
+                "runMode": run_mode,
+                "structuredOutput": bool(comment.get("structuredOutput")) if isinstance(comment, dict) else False,
+                "structuredOutputError": comment.get("structuredOutputError") if isinstance(comment, dict) else None,
+                "memoryCandidateIds": comment.get("memoryCandidateIds") if isinstance(comment, dict) else [],
+                "memoryCandidateCount": comment.get("memoryCandidateCount") if isinstance(comment, dict) else 0,
+                "memoryCandidateErrors": comment.get("memoryCandidateErrors") if isinstance(comment, dict) else [],
+                "openQuestions": comment.get("openQuestions") if isinstance(comment, dict) else [],
+            }
+            gui_copilot_runs.mark_agent_done(record, memory_root, run_id, agent_id, comment_id, result_payload)
         except Exception as error:
             if gui_copilot_runs.is_canceled(record, memory_root, run_id):
                 return

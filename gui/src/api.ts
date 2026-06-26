@@ -7,6 +7,8 @@ import type {
   CopilotAgentConfig,
   CreateAgentMemoryInput,
   CreateCopilotRunInput,
+  CreateMemoryCandidatesFromAgentCommentInput,
+  CreatedMemoryCandidatesPayload,
   CreateAnnotationCommentInput,
   InvokeAnnotationAgentInput,
   CreatePaperMemoryItemInput,
@@ -21,6 +23,7 @@ import type {
   PaperSummary,
   ProcessingTask,
   ReadingState,
+  MemoryResearchStatePayload,
   SearchResult,
   UpdateAgentMemoryInput,
   UpdateAnnotationCommentInput,
@@ -169,6 +172,10 @@ export function fetchMemoryCandidates() {
   return requestJson<MemoryCandidatePayload>('/api/memory/candidates')
 }
 
+export function fetchMemoryResearchState() {
+  return requestJson<MemoryResearchStatePayload>('/api/memory/research-state')
+}
+
 export function postActivateMemoryCandidate(itemId: string) {
   return requestJson<MemoryCandidateItem>(
     `/api/memory/candidates/${encodeURIComponent(itemId)}/activate`,
@@ -183,6 +190,23 @@ export function postArchiveMemoryCandidate(itemId: string) {
     `/api/memory/candidates/${encodeURIComponent(itemId)}/archive`,
     {
       method: 'POST',
+    },
+  )
+}
+
+export function postAnnotationMemoryCandidates(
+  paperId: string,
+  annotationId: string,
+  payload: CreateMemoryCandidatesFromAgentCommentInput,
+) {
+  return requestJson<CreatedMemoryCandidatesPayload>(
+    `/api/papers/${encodeURIComponent(paperId)}/annotations/${encodeURIComponent(annotationId)}/memory-candidates`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     },
   )
 }

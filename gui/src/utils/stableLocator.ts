@@ -58,11 +58,7 @@ export function normalizeStableLocator(locator?: StableLocator | null) {
 }
 
 export function buildSearchResultLocator(result: SearchResult) {
-  if (result.locator) {
-    return normalizeStableLocator(result.locator)
-  }
-
-  return normalizeStableLocator({
+  const fallback = normalizeStableLocator({
     view: result.view ?? null,
     annotationId: result.annotationId ?? null,
     memoryItemId: result.memoryItemId ?? null,
@@ -70,6 +66,16 @@ export function buildSearchResultLocator(result: SearchResult) {
     contextBefore: result.source === 'body' ? (result.matchContextBefore ?? null) : null,
     contextAfter: result.source === 'body' ? (result.matchContextAfter ?? null) : null,
   })
+  if (result.locator) {
+    return normalizeStableLocator({
+      ...(fallback ?? {}),
+      ...result.locator,
+      memoryItemId: result.locator.memoryItemId ?? result.memoryItemId ?? fallback?.memoryItemId,
+      annotationId: result.locator.annotationId ?? result.annotationId ?? fallback?.annotationId,
+    })
+  }
+
+  return fallback
 }
 
 export function buildPaperMemoryItemLocator(item: PaperMemoryItem) {

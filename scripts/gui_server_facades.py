@@ -150,6 +150,7 @@ class CopilotFacade:
         follow_up_comment: dict[str, object] | None = None,
         context_cache: dict[str, object] | None = None,
         relevant_chunks: list[dict[str, object]] | None = None,
+        run_mode: str = "comment",
     ) -> list[dict[str, str]]:
         return gui_copilot.build_agent_messages(
             record,
@@ -161,6 +162,7 @@ class CopilotFacade:
             follow_up_comment=follow_up_comment,
             context_cache=context_cache,
             relevant_chunks=relevant_chunks,
+            run_mode=run_mode,
         )
 
     def invoke_annotation_agent(self, record: Any, payload: dict[str, object], should_cancel=None):

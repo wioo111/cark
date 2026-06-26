@@ -145,6 +145,7 @@ export default function ReaderPage() {
     handleArchiveToggle,
     handleDeleteAnnotation,
     handleCreateMemoryFromAnnotation,
+    handleSelectionAgentAction,
     handleCancelCopilotRun,
     handleRetryCopilotRun,
   } = useReaderAnnotationActions({
@@ -157,6 +158,7 @@ export default function ReaderPage() {
     setFocusedAnnotationId,
     setMemoryOpen,
     setMemoryRefreshKey,
+    agentIdsForQuickActions: availableAgents.map((agent) => agent.id),
     startCopilotRun,
     cancelCopilotRun,
     retryCopilotRun,
@@ -362,6 +364,10 @@ export default function ReaderPage() {
           onCopy={() => void handleCopySelection()}
           onSearch={handleSearchSelection}
           onComment={handleDraftStart}
+          onExplain={() => void handleSelectionAgentAction('explain')}
+          onCritique={() => void handleSelectionAgentAction('critique')}
+          onMemoryCandidate={() => void handleSelectionAgentAction('memory_candidate')}
+          agentActionsDisabled={availableAgents.length === 0}
         />
       ) : null}
 

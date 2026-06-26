@@ -7,8 +7,8 @@ import {
   postActivateMemoryCandidate,
   postArchiveMemoryCandidate,
 } from '@/api'
-import type { MemoryCandidateItem, StableLocator } from '@/types'
-import { buildLocatorSearchParams } from '@/utils/stableLocator'
+import type { MemoryCandidateItem, PaperMemoryItem, StableLocator } from '@/types'
+import { buildLocatorSearchParams, buildPaperMemoryItemLocator } from '@/utils/stableLocator'
 
 interface MemoryInboxProps {
   onChanged?: () => void
@@ -158,8 +158,13 @@ export function MemoryInbox({ onChanged }: MemoryInboxProps) {
 
 function buildMemoryCandidateHref(item: MemoryCandidateItem) {
   const paperId = item.paperId ?? ''
-  const locator = normalizeCandidateLocator(item.locator)
+  const locator = item.layer === 'paper'
+    ? buildPaperMemoryItemLocator(item as PaperMemoryItem)
+    : normalizeCandidateLocator(item.locator)
   const params = locator ? buildLocatorSearchParams(locator) : new URLSearchParams()
+  if (item.layer === 'paper' && !params.has('memory')) {
+    params.set('memory', item.id)
+  }
   const suffix = params.size > 0 ? `?${params.toString()}` : ''
   return `/reader/${encodeURIComponent(paperId)}${suffix}`
 }

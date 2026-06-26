@@ -40,7 +40,7 @@ describe('MemoryInbox', () => {
           sourceAnnotationId: 'annotation-1',
           quote: 'Important evidence',
           evidence: [{ quote: 'Important evidence' }],
-          locator: { annotationId: 'annotation-1', memoryItemId: 'memory-1' },
+          locator: { annotationId: 'annotation-1' },
           anchor: null,
           tags: [],
           status: 'active',

@@ -39,6 +39,7 @@ function makeRun(overrides: Partial<CopilotRun> = {}): CopilotRun {
       },
     ],
     status: 'queued',
+    runMode: 'comment',
     userMessage: '',
     followUpCommentId: null,
     followUpAgentId: null,

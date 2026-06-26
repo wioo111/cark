@@ -13,7 +13,7 @@ import type {
   AnnotationReplyDraft,
   AnnotationReplyTarget,
 } from '@/components/CommentLane'
-import type { PaperAnnotation, PaperDetail } from '@/types'
+import type { CopilotRunMode, CreateCopilotRunInput, PaperAnnotation, PaperDetail } from '@/types'
 import {
   buildMemoryTextFromAnnotation,
   findExistingAnnotationId,
@@ -33,13 +33,8 @@ interface UseReaderAnnotationActionsArgs {
   setFocusedAnnotationId: React.Dispatch<React.SetStateAction<string | null>>
   setMemoryOpen: React.Dispatch<React.SetStateAction<boolean>>
   setMemoryRefreshKey: React.Dispatch<React.SetStateAction<number>>
-  startCopilotRun: (payload: {
-    annotationId: string
-    agentIds: string[]
-    userMessage: string
-    followUpCommentId?: string
-    followUpAgentId?: string
-  }) => Promise<unknown>
+  agentIdsForQuickActions: string[]
+  startCopilotRun: (payload: CreateCopilotRunInput) => Promise<unknown>
   cancelCopilotRun: (runId: string) => Promise<unknown>
   retryCopilotRun: (runId: string, agentId?: string) => Promise<unknown>
 }
@@ -54,6 +49,7 @@ export function useReaderAnnotationActions({
   setFocusedAnnotationId,
   setMemoryOpen,
   setMemoryRefreshKey,
+  agentIdsForQuickActions,
   startCopilotRun,
   cancelCopilotRun,
   retryCopilotRun,
@@ -91,6 +87,59 @@ export function useReaderAnnotationActions({
     })
     clearBrowserSelection()
     setToolbarSelection(null)
+  }
+
+  async function handleSelectionAgentAction(runMode: CopilotRunMode) {
+    if (!detail || !toolbarSelection) {
+      return
+    }
+    const agentId = agentIdsForQuickActions[0]
+    if (!agentId) {
+      setAnnotationError('请先在设置里配置可用的共读助手')
+      return
+    }
+
+    const selectionSnapshot = toolbarSelection
+    const userMessage = buildSelectionAgentPrompt(runMode)
+    const quickDraft = {
+      view: selectionSnapshot.view,
+      blockId: selectionSnapshot.blockId,
+      quote: selectionSnapshot.quote,
+      contextBefore: selectionSnapshot.contextBefore,
+      contextAfter: selectionSnapshot.contextAfter,
+      anchorTop: selectionSnapshot.anchorTop,
+      anchorHeight: selectionSnapshot.anchorHeight,
+      content: userMessage,
+      mentionAgentIds: [],
+    }
+    setAnnotationError(null)
+    setToolbarSelection(null)
+    clearBrowserSelection()
+    try {
+      const nextAnnotations = await upsertAnnotationComment(detail.id, annotations, quickDraft, {
+        authorType: 'user',
+        authorLabel: '我的评论',
+        content: userMessage,
+        status: 'ready',
+      })
+      const annotationId = findExistingAnnotationId(nextAnnotations, quickDraft)
+      setAnnotations(nextAnnotations)
+      if (!annotationId) {
+        throw new Error('创建批注后未找到对应线程')
+      }
+      setFocusedAnnotationId(annotationId)
+      await startCopilotRun({
+        annotationId,
+        agentIds: [agentId],
+        runMode,
+        userMessage,
+      })
+      if (runMode === 'memory_candidate') {
+        setMemoryOpen(true)
+      }
+    } catch (error) {
+      setAnnotationError(formatAnnotationError('启动共读动作失败', error))
+    }
   }
 
   async function handleDraftSubmit() {
@@ -384,7 +433,21 @@ export function useReaderAnnotationActions({
     handleArchiveToggle,
     handleDeleteAnnotation,
     handleCreateMemoryFromAnnotation,
+    handleSelectionAgentAction,
     handleCancelCopilotRun,
     handleRetryCopilotRun,
   }
+}
+
+function buildSelectionAgentPrompt(runMode: CopilotRunMode) {
+  if (runMode === 'explain') {
+    return '请解释这句话在全文中的作用。'
+  }
+  if (runMode === 'critique') {
+    return '请指出这句话的问题、限制或可能反例。'
+  }
+  if (runMode === 'memory_candidate') {
+    return '请将这句话沉淀为可审核的研究记忆候选项。'
+  }
+  return '请围绕这句话给出具体判断。'
 }

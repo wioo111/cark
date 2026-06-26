@@ -64,6 +64,33 @@ describe('stable locator utils', () => {
     })
   })
 
+  it('fills missing memory ids on explicit memory search locators', () => {
+    const result: SearchResult = {
+      id: 'result-memory',
+      paperId: 'paper-1',
+      paperTitle: 'Paper',
+      source: 'memory',
+      sourceLabel: '记忆',
+      snippet: 'snippet',
+      score: 5,
+      view: 'linearized',
+      annotationId: 'annotation-1',
+      memoryItemId: 'memory-1',
+      locator: {
+        view: 'linearized',
+        annotationId: 'annotation-1',
+        quote: 'locator quote',
+      },
+    }
+
+    expect(buildSearchResultLocator(result)).toEqual({
+      view: 'linearized',
+      annotationId: 'annotation-1',
+      memoryItemId: 'memory-1',
+      quote: 'locator quote',
+    })
+  })
+
   it('builds a memory locator from legacy anchor fields', () => {
     expect(
       buildPaperMemoryItemLocator({

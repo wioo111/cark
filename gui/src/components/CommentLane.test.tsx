@@ -87,6 +87,100 @@ describe('CommentLane', () => {
     expect(onSelectAnnotation).not.toHaveBeenCalled()
   })
 
+  it('shows memory candidate status on agent comments', () => {
+    const agentAnnotation: PaperAnnotation = {
+      ...annotation,
+      comments: [
+        ...annotation.comments,
+        {
+          id: 'comment-agent',
+          authorType: 'agent',
+          authorLabel: 'Method Agent',
+          agentId: 'agent-a',
+          content: 'Agent reply',
+          preview: 'Agent reply',
+          createdAt: '2026-06-17T00:00:00',
+          updatedAt: '2026-06-17T00:00:00',
+          status: 'ready',
+        },
+      ],
+    }
+
+    render(
+      <CommentLane
+        annotations={[agentAnnotation]}
+        activeView="linearized"
+        laneHeight={420}
+        agents={[{ id: 'agent-a', name: 'Method Agent', rolePrompt: '', apiKey: '', baseUrl: '', model: '', enabled: true }]}
+        activeAgentAnnotationIds={[]}
+        copilotRuns={[
+          {
+            runId: 'run-1',
+            paperId: 'paper-1',
+            annotationId: 'annotation-1',
+            status: 'done',
+            runMode: 'memory_candidate',
+            userMessage: '',
+            followUpCommentId: null,
+            followUpAgentId: null,
+            agents: [
+              {
+                agentId: 'agent-a',
+                agentName: 'Method Agent',
+                status: 'done',
+                resultCommentId: 'comment-agent',
+                memoryCandidateIds: ['memory-1', 'memory-2'],
+              },
+            ],
+            results: [
+              {
+                agentId: 'agent-a',
+                commentId: 'comment-agent',
+                runMode: 'memory_candidate',
+                structuredOutput: true,
+                memoryCandidateIds: ['memory-1', 'memory-2'],
+                memoryCandidateCount: 2,
+              },
+            ],
+            errors: [],
+            createdAt: '2026-06-17T00:00:00',
+            updatedAt: '2026-06-17T00:00:00',
+            attempt: 1,
+          },
+        ]}
+        memorySavingAnnotationIds={[]}
+        memorySavedAnnotationIds={[]}
+        draft={null}
+        savingDraft={false}
+        replyDraft={null}
+        savingReply={false}
+        editDraft={null}
+        savingEdit={false}
+        onDraftChange={vi.fn()}
+        onDraftCancel={vi.fn()}
+        onDraftSubmit={vi.fn()}
+        onDraftAgentToggle={vi.fn()}
+        onSelectAnnotation={vi.fn()}
+        onReplyStart={vi.fn()}
+        onReplyChange={vi.fn()}
+        onReplyCancel={vi.fn()}
+        onReplySubmit={vi.fn()}
+        onReplyAgentToggle={vi.fn()}
+        onCancelCopilotRun={vi.fn()}
+        onRetryCopilotRun={vi.fn()}
+        onEditStart={vi.fn()}
+        onEditChange={vi.fn()}
+        onEditCancel={vi.fn()}
+        onEditSubmit={vi.fn()}
+        onArchiveToggle={vi.fn()}
+        onDeleteAnnotation={vi.fn()}
+        onCreateMemoryFromAnnotation={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('已生成候选记忆 2')).toBeInTheDocument()
+  })
+
   it('shows memory save feedback states', () => {
     const { rerender } = render(
       <CommentLane
@@ -187,6 +281,7 @@ describe('CommentLane', () => {
             paperId: 'paper-1',
             annotationId: 'annotation-1',
             status: 'running',
+            runMode: 'comment',
             userMessage: 'Explain this',
             agents: [
               {
@@ -206,6 +301,7 @@ describe('CommentLane', () => {
             paperId: 'paper-1',
             annotationId: 'annotation-1',
             status: 'failed',
+            runMode: 'comment',
             userMessage: 'Explain this',
             agents: [
               {

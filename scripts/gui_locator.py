@@ -78,10 +78,8 @@ def build_annotation_locator(annotation: dict[str, object], *, comment_id: str |
 
 def build_memory_locator(item: dict[str, object]) -> dict[str, object] | None:
     locator = normalize_locator(item.get("locator"))
-    if locator:
-        return locator
     anchor = item.get("anchor") if isinstance(item.get("anchor"), dict) else {}
-    return build_locator(
+    fallback = build_locator(
         view=anchor.get("view"),
         annotation_id=item.get("sourceAnnotationId"),
         memory_item_id=item.get("id"),
@@ -90,3 +88,11 @@ def build_memory_locator(item: dict[str, object]) -> dict[str, object] | None:
         context_before=anchor.get("contextBefore"),
         context_after=anchor.get("contextAfter"),
     )
+    if locator:
+        merged = {**(fallback or {}), **locator}
+        if "memoryItemId" not in merged:
+            memory_item_id = optional_string(item.get("id"))
+            if memory_item_id:
+                merged["memoryItemId"] = memory_item_id
+        return normalize_locator(merged)
+    return fallback

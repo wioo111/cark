@@ -124,8 +124,12 @@ class GuiLocatorTests(unittest.TestCase):
             locator,
             {
                 "view": "bilingual",
+                "annotationId": "annotation-legacy",
+                "memoryItemId": "memory-2",
                 "blockId": "block-9",
                 "quote": "locator quote",
+                "contextBefore": "before",
+                "contextAfter": "after",
             },
         )
 

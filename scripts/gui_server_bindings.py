@@ -8,6 +8,7 @@ import gui_exports
 import gui_library
 import gui_memory
 import gui_memory_candidates
+import gui_memory_research
 
 
 class ServerBindings:
@@ -206,6 +207,10 @@ def build_app_get_bindings(
             memory_root,
             list_candidate_records(list_papers, get_record),
         ),
+        "list_memory_research_state": lambda: gui_memory_research.list_memory_research_state(
+            memory_root,
+            list_candidate_records(list_papers, get_record),
+        ),
     }
 
 
@@ -334,6 +339,12 @@ def build_papers_post_bindings(
         "export_markdown": lambda record: gui_exports.export_paper_memory_markdown(record, memory_root),
         "load_annotation": load_annotation,
         "create_memory_from_annotation": lambda record, annotation, payload: gui_memory.create_memory_item_from_annotation(
+            record,
+            memory_root,
+            annotation,
+            payload,
+        ),
+        "create_memory_candidates_from_agent_comment": lambda record, annotation, payload: gui_memory.create_memory_candidates_from_agent_comment(
             record,
             memory_root,
             annotation,

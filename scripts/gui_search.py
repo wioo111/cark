@@ -32,17 +32,24 @@ def search_records(
     terms = parse_query_terms(query)
     if not terms:
         return []
+    records_list = list(records)
 
     if search_store is not None:
         stored_results = search_store.search_search_entries(terms, limit=max(1, min(limit, 200)))
         if stored_results is not None:
+            stored_results = hydrate_stored_memory_results(
+                stored_results,
+                records_list,
+                memory_root=memory_root,
+                terms=terms,
+            )
             stored_results.sort(
                 key=lambda item: (-score_text(str(item.get("haystack") or ""), terms, str(item.get("source") or "")), str(item.get("paperTitle") or "").lower())
             )
             return [strip_internal_fields(result, terms) for result in stored_results[: max(1, min(limit, 200))]]
 
     entries = build_search_index(
-        records,
+        records_list,
         memory_root=memory_root,
         load_markdown=load_markdown,
         load_annotations=load_annotations,
@@ -50,6 +57,54 @@ def search_records(
     results = [entry for entry in entries if entry_matches(entry["haystack"], terms)]
     results.sort(key=lambda item: (-score_text(item["haystack"], terms, item["source"]), str(item["paperTitle"]).lower()))
     return [strip_internal_fields(result, terms) for result in results[: max(1, min(limit, 200))]]
+
+
+def hydrate_stored_memory_results(
+    stored_results: list[dict[str, object]],
+    records: list[Any],
+    *,
+    memory_root: Path,
+    terms: list[str],
+) -> list[dict[str, object]]:
+    record_by_id = {str(record.paper_id): record for record in records if hasattr(record, "paper_id")}
+    memory_cache: dict[str, dict[str, dict[str, object]]] = {}
+    hydrated: list[dict[str, object]] = []
+    for result in stored_results:
+        if str(result.get("source") or "") != "memory":
+            hydrated.append(result)
+            continue
+        paper_id = optional_string(result.get("paperId"))
+        memory_item_id = optional_string(result.get("memoryItemId"))
+        if not paper_id or not memory_item_id:
+            continue
+        record = record_by_id.get(paper_id)
+        if record is None:
+            continue
+        if paper_id not in memory_cache:
+            memory_cache[paper_id] = {
+                str(item.get("id")): item
+                for item in gui_memory.load_memory_items(record, memory_root)
+                if isinstance(item.get("id"), str)
+            }
+        item = memory_cache[paper_id].get(memory_item_id)
+        if item is None or not gui_memory.is_behavioral_memory_item(item):
+            continue
+        text = build_memory_search_text(item)
+        haystack = normalize_for_search(f"{record.title} {text}")
+        if not entry_matches(haystack, terms):
+            continue
+        hydrated.append(
+            {
+                **result,
+                "paperTitle": str(record.title),
+                "view": result.get("view") or extract_memory_view(item),
+                "annotationId": result.get("annotationId") or optional_string(item.get("sourceAnnotationId")),
+                "text": text,
+                "haystack": haystack,
+                "locator": gui_locator.build_memory_locator(item),
+            }
+        )
+    return hydrated
 
 
 def build_search_index(
@@ -144,16 +199,7 @@ def build_record_search_index(
         if not gui_memory.is_behavioral_memory_item(item):
             continue
         item_id = optional_string(item.get("id"))
-        text = " ".join(
-            part
-            for part in [
-                optional_string(item.get("text")),
-                optional_string(item.get("quote")),
-                " ".join(str(tag) for tag in item.get("tags", []) if isinstance(tag, str)),
-                optional_string(item.get("type")),
-            ]
-            if part
-        )
+        text = build_memory_search_text(item)
         if text:
             entries.append(
                 make_entry(
@@ -168,6 +214,19 @@ def build_record_search_index(
                 )
             )
     return entries
+
+
+def build_memory_search_text(item: dict[str, object]) -> str:
+    return " ".join(
+        part
+        for part in [
+            optional_string(item.get("text")),
+            optional_string(item.get("quote")),
+            " ".join(str(tag) for tag in item.get("tags", []) if isinstance(tag, str)),
+            optional_string(item.get("type")),
+        ]
+        if part
+    )
 
 
 def make_entry(

@@ -1,9 +1,10 @@
 import { AlertCircle, RefreshCw, Search, Settings2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
   fetchCapabilities,
+  fetchMemoryResearchState,
   fetchSearchResults,
   fetchSettings,
   fetchTasks,
@@ -13,6 +14,8 @@ import {
 } from '@/api'
 import { PaperListItem } from '@/components/PaperListItem'
 import { MemoryInbox } from '@/components/MemoryInbox'
+import { OpenQuestions } from '@/components/OpenQuestions'
+import { RecentInsights } from '@/components/RecentInsights'
 import { SettingsPanel } from '@/components/SettingsPanel'
 import { TaskCenter } from '@/components/TaskCenter'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
@@ -22,6 +25,7 @@ import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import type {
   AppCapabilities,
   AppSettings,
+  MemoryResearchStatePayload,
   PaperReadingStatus,
   PaperSummary,
   ProcessingTask,
@@ -96,6 +100,9 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const [researchState, setResearchState] = useState<MemoryResearchStatePayload | null>(null)
+  const [researchLoading, setResearchLoading] = useState(false)
+  const [researchError, setResearchError] = useState<string | null>(null)
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all')
   const [tagFilter, setTagFilter] = useState('all')
   const [updatingPaperId, setUpdatingPaperId] = useState<string | null>(null)
@@ -116,6 +123,23 @@ export default function Home() {
     document.title = 'cark'
     void refreshPapers()
   }, [refreshPapers])
+
+  const loadResearchState = useCallback(async () => {
+    setResearchLoading(true)
+    setResearchError(null)
+    try {
+      setResearchState(await fetchMemoryResearchState())
+    } catch (loadError) {
+      setResearchState(null)
+      setResearchError(loadError instanceof Error ? loadError.message : '研究状态加载失败')
+    } finally {
+      setResearchLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadResearchState()
+  }, [loadResearchState])
 
   useEffect(() => {
     let cancelled = false
@@ -597,7 +621,30 @@ export default function Home() {
           </div>
 
           <div className="space-y-6">
-            <MemoryInbox onChanged={() => void refreshPapers()} />
+            <MemoryInbox
+              onChanged={() => {
+                void refreshPapers()
+                void loadResearchState()
+              }}
+            />
+            <RecentInsights
+              items={researchState?.recentInsights ?? []}
+              count={researchState?.insightCount ?? 0}
+              loading={researchLoading}
+              error={researchError}
+              onRefresh={() => void loadResearchState()}
+            />
+            <OpenQuestions
+              items={researchState?.openQuestions ?? []}
+              count={researchState?.openQuestionCount ?? 0}
+              loading={researchLoading}
+              error={researchError}
+              onRefresh={() => void loadResearchState()}
+              onChanged={() => {
+                void refreshPapers()
+                void loadResearchState()
+              }}
+            />
             <TaskCenter
               tasks={tasks}
               loading={tasksLoading}

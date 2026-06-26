@@ -28,15 +28,52 @@ class GuiCopilotRunsTest(unittest.TestCase):
                     "annotationId": "annotation-1",
                     "agentIds": ["agent-a"],
                     "userMessage": "Explain this",
+                    "runMode": "explain",
                 },
                 [{"id": "agent-a", "name": "Agent A"}],
             )
 
             self.assertEqual(run["status"], "queued")
+            self.assertEqual(run["runMode"], "explain")
             self.assertEqual(run["paperId"], "paper-1")
             self.assertEqual(run["annotationId"], "annotation-1")
             self.assertEqual(run["agents"][0]["agentId"], "agent-a")
             self.assertEqual(gui_copilot_runs.list_runs(record, memory_root)[0]["runId"], run["runId"])
+
+    def test_mark_agent_done_records_structured_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            record = FakeRecord()
+            memory_root = Path(temp_dir)
+            run = gui_copilot_runs.create_run(
+                record,
+                memory_root,
+                {
+                    "annotationId": "annotation-1",
+                    "runMode": "memory_candidate",
+                },
+                [{"id": "agent-a", "name": "Agent A"}],
+            )
+            run_id = str(run["runId"])
+
+            updated = gui_copilot_runs.mark_agent_done(
+                record,
+                memory_root,
+                run_id,
+                "agent-a",
+                "comment-1",
+                {
+                    "runMode": "memory_candidate",
+                    "structuredOutput": True,
+                    "memoryCandidateIds": ["memory-1"],
+                    "memoryCandidateCount": 1,
+                    "openQuestions": ["Question?"],
+                },
+            )
+
+            self.assertEqual(updated["runMode"], "memory_candidate")
+            self.assertEqual(updated["agents"][0]["memoryCandidateIds"], ["memory-1"])
+            self.assertEqual(updated["results"][0]["memoryCandidateIds"], ["memory-1"])
+            self.assertEqual(updated["results"][0]["memoryCandidateCount"], 1)
 
     def test_marks_failed_agent_and_retries_only_target_agent(self):
         with tempfile.TemporaryDirectory() as temp_dir:

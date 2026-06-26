@@ -95,6 +95,7 @@ def handle_post(
     load_annotations: Callable[[Any], list[dict[str, object]]],
     build_memory_payload: Callable[[Any], dict[str, object]],
     refresh_index: Callable[[Any], None],
+    create_memory_candidates_from_agent_comment: Callable[[Any, dict[str, object], dict[str, object]], dict[str, object]] | None = None,
 ) -> bool:
     paper_route = parse_paper_api_path(parsed.path)
     if not paper_route:
@@ -132,6 +133,16 @@ def handle_post(
             return True
         if remainder == "/exports/markdown":
             handler.write_json(export_markdown(record), status=HTTPStatus.CREATED)
+            return True
+        if remainder.startswith("/annotations/") and remainder.endswith("/memory-candidates"):
+            if create_memory_candidates_from_agent_comment is None:
+                handler.write_json({"error": "memory candidate API is unavailable"}, status=HTTPStatus.NOT_FOUND)
+                return True
+            annotation_id = unquote(remainder.removeprefix("/annotations/").removesuffix("/memory-candidates").strip("/"))
+            _annotation_path, annotation = load_annotation(record, annotation_id)
+            result = create_memory_candidates_from_agent_comment(record, annotation, payload)
+            refresh_index(record)
+            handler.write_json(result, status=HTTPStatus.CREATED)
             return True
         if remainder.startswith("/annotations/") and remainder.endswith("/memory"):
             annotation_id = unquote(remainder.removeprefix("/annotations/").removesuffix("/memory").strip("/"))

@@ -116,6 +116,20 @@ export interface MemoryCandidatePayload {
   count: number
 }
 
+export type ResearchMemoryItem = PaperMemoryItem & {
+  layer: 'paper'
+  paperId: string
+  paperTitle: string
+  locator?: StableLocator | null
+}
+
+export interface MemoryResearchStatePayload {
+  recentInsights: ResearchMemoryItem[]
+  openQuestions: ResearchMemoryItem[]
+  insightCount: number
+  openQuestionCount: number
+}
+
 export interface CreateAgentMemoryInput {
   type: AgentMemoryType
   text: string
@@ -283,6 +297,26 @@ export interface CreatePaperMemoryItemInput {
   conflictsWith?: string[]
 }
 
+export interface AgentCommentMemoryCandidateInput {
+  type: MemoryItemType
+  text: string
+  tags?: string[]
+  confidence?: number
+  evidenceQuote?: string | null
+}
+
+export interface CreateMemoryCandidatesFromAgentCommentInput {
+  sourceCommentId: string
+  agentId?: string | null
+  runId?: string | null
+  runMode?: CopilotRunMode
+  items: AgentCommentMemoryCandidateInput[]
+}
+
+export interface CreatedMemoryCandidatesPayload {
+  created: PaperMemoryItem[]
+}
+
 export interface UpdatePaperMemoryItemInput {
   type?: MemoryItemType
   text?: string
@@ -315,18 +349,40 @@ export interface AnnotationComment {
   content: string
   preview: string
   locator?: StableLocator | null
+  runMode?: CopilotRunMode
+  structuredOutput?: boolean
+  structuredOutputError?: string | null
+  openQuestions?: string[]
+  memoryCandidateIds?: string[]
+  memoryCandidateCount?: number
+  memoryCandidateErrors?: string[]
   createdAt: string
   updatedAt: string
   status: AnnotationCommentStatus
 }
 
 export type CopilotRunStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled'
+export type CopilotRunMode = 'comment' | 'critique' | 'explain' | 'memory_candidate'
+
+export interface CopilotRunResult {
+  agentId?: string
+  commentId?: string | null
+  runMode?: CopilotRunMode
+  structuredOutput?: boolean
+  structuredOutputError?: string | null
+  memoryCandidateIds?: string[]
+  memoryCandidateCount?: number
+  memoryCandidateErrors?: string[]
+  openQuestions?: string[]
+  createdAt?: string
+}
 
 export interface CopilotRunAgent {
   agentId: string
   agentName: string
   status: CopilotRunStatus
   resultCommentId?: string | null
+  memoryCandidateIds?: string[]
   error?: string | null
   startedAt?: string | null
   finishedAt?: string | null
@@ -338,10 +394,11 @@ export interface CopilotRun {
   annotationId: string
   agents: CopilotRunAgent[]
   status: CopilotRunStatus
+  runMode: CopilotRunMode
   userMessage: string
   followUpCommentId?: string | null
   followUpAgentId?: string | null
-  results: Array<Record<string, unknown>>
+  results: CopilotRunResult[]
   errors: Array<{ agentId?: string; message?: string; createdAt?: string }>
   createdAt: string
   updatedAt: string
@@ -353,6 +410,7 @@ export interface CopilotRun {
 export interface CreateCopilotRunInput {
   annotationId: string
   agentIds: string[]
+  runMode?: CopilotRunMode
   userMessage?: string
   followUpCommentId?: string
   followUpAgentId?: string

@@ -18,6 +18,7 @@ def handle_get(
     list_papers: Callable[[], list[dict[str, object]]],
     search_records: Callable[[str, int], list[dict[str, object]]],
     list_memory_candidates: Callable[[], dict[str, object]],
+    list_memory_research_state: Callable[[], dict[str, object]] | None = None,
 ) -> bool:
     if parsed.path == "/api/settings":
         handler.write_json(load_settings())
@@ -38,6 +39,13 @@ def handle_get(
 
     if parsed.path == "/api/memory/candidates":
         handler.write_json(list_memory_candidates())
+        return True
+
+    if parsed.path == "/api/memory/research-state":
+        if list_memory_research_state is None:
+            handler.write_json({"error": "memory research state API is unavailable"}, status=HTTPStatus.NOT_FOUND)
+            return True
+        handler.write_json(list_memory_research_state())
         return True
 
     if parsed.path == "/api/zotero/status":

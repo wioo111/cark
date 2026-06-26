@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 
-import type { AnnotationComment, CopilotAgentConfig, CopilotRun, PaperAnnotation } from '@/types'
+import type { AnnotationComment, CopilotAgentConfig, CopilotRun, CopilotRunResult, PaperAnnotation } from '@/types'
 
 import type {
   AnnotationComposerDraft,
@@ -164,6 +164,7 @@ export function CommentThreadCard({
                 annotationId={annotation.id}
                 comment={comment}
                 agents={agents}
+                copilotRuns={annotationCopilotRuns}
                 inlineReplyDraft={inlineFollowUpReply ? replyDraft : null}
                 savingReply={savingReply}
                 onReplyStart={onReplyStart}
@@ -842,6 +843,39 @@ function resolveCommentAgentId(comment: AnnotationComment, agents: CopilotAgentC
   return exact?.id ?? null
 }
 
+function findCopilotResultForComment(commentId: string, runs: CopilotRun[]): CopilotRunResult | null {
+  for (const run of runs) {
+    const result = run.results.find((item) => item.commentId === commentId)
+    if (result) {
+      return result
+    }
+    const agent = run.agents.find((item) => item.resultCommentId === commentId)
+    if (agent) {
+      return {
+        commentId,
+        agentId: agent.agentId,
+        runMode: run.runMode,
+        memoryCandidateIds: agent.memoryCandidateIds ?? [],
+      }
+    }
+  }
+  return null
+}
+
+function resolveCommentMemoryCandidateIds(comment: AnnotationComment, result: CopilotRunResult | null) {
+  if (Array.isArray(comment.memoryCandidateIds) && comment.memoryCandidateIds.length > 0) {
+    return comment.memoryCandidateIds
+  }
+  if (Array.isArray(result?.memoryCandidateIds)) {
+    return result.memoryCandidateIds
+  }
+  return []
+}
+
+function normalizeCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
 function QuoteDetailBlock({
   label,
   content,
@@ -870,6 +904,7 @@ function AgentCommentCard({
   annotationId,
   comment,
   agents,
+  copilotRuns,
   inlineReplyDraft,
   savingReply,
   onReplyStart,
@@ -880,6 +915,7 @@ function AgentCommentCard({
   annotationId: string
   comment: AnnotationComment
   agents: CopilotAgentConfig[]
+  copilotRuns: CopilotRun[]
   inlineReplyDraft: AnnotationReplyDraft | null
   savingReply: boolean
   onReplyStart: (annotationId: string, target?: AnnotationReplyTarget) => void
@@ -893,6 +929,16 @@ function AgentCommentCard({
     agentLabel: comment.authorLabel,
     commentPreview: comment.preview || comment.content,
   }
+  const copilotResult = findCopilotResultForComment(comment.id, copilotRuns)
+  const memoryCandidateIds = resolveCommentMemoryCandidateIds(comment, copilotResult)
+  const memoryCandidateCount =
+    memoryCandidateIds.length ||
+    normalizeCount(comment.memoryCandidateCount) ||
+    normalizeCount(copilotResult?.memoryCandidateCount)
+  const structuredOutput =
+    typeof comment.structuredOutput === 'boolean' ? comment.structuredOutput : Boolean(copilotResult?.structuredOutput)
+  const structuredError = comment.structuredOutputError || copilotResult?.structuredOutputError
+  const showNoCandidateStatus = Boolean(structuredError) || (structuredOutput && memoryCandidateCount === 0)
 
   return (
     <section className="overflow-hidden rounded-[20px] border border-sky-300/15 bg-[var(--surface-soft)]">
@@ -927,6 +973,17 @@ function AgentCommentCard({
               <p className="cark-title text-sm">{comment.authorLabel}</p>
               <span className="cark-faint text-xs">共读助手</span>
             </div>
+            {memoryCandidateCount > 0 ? (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/[0.08] px-2.5 py-1 text-[11px] text-emerald-100">
+                <Check className="h-3.5 w-3.5" />
+                已生成候选记忆 {memoryCandidateCount}
+              </div>
+            ) : showNoCandidateStatus ? (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
+                <BookMarked className="h-3.5 w-3.5" />
+                未生成可沉淀项
+              </div>
+            ) : null}
             <div className="mt-2 max-h-[10.5rem] overflow-hidden">
               <CompactCommentPreview content={comment.content} preview={comment.preview} />
             </div>

@@ -13,6 +13,7 @@ import gui_memory
 RUN_STATUSES = {"queued", "running", "done", "failed", "canceled"}
 ACTIVE_STATUSES = {"queued", "running"}
 RETRYABLE_AGENT_STATUSES = {"failed", "canceled"}
+RUN_MODES = {"comment", "critique", "explain", "memory_candidate"}
 _RUN_LOCK = threading.RLock()
 
 
@@ -94,6 +95,7 @@ def create_run(record: Any, memory_root: Path, payload: dict[str, object], agent
         "annotationId": annotation_id.strip(),
         "agents": agent_runs,
         "status": "queued",
+        "runMode": normalize_run_mode(payload.get("runMode")),
         "userMessage": str(payload.get("userMessage") or "").strip(),
         "followUpCommentId": str(payload.get("followUpCommentId") or "").strip() or None,
         "followUpAgentId": str(payload.get("followUpAgentId") or "").strip() or None,
@@ -155,21 +157,43 @@ def mark_agent_running(record: Any, memory_root: Path, run_id: str, agent_id: st
     return update_run(record, memory_root, run_id, apply)
 
 
-def mark_agent_done(record: Any, memory_root: Path, run_id: str, agent_id: str, comment_id: str | None) -> dict[str, object]:
+def mark_agent_done(
+    record: Any,
+    memory_root: Path,
+    run_id: str,
+    agent_id: str,
+    comment_id: str | None,
+    result_payload: dict[str, object] | None = None,
+) -> dict[str, object]:
     def apply(run: dict[str, object]) -> dict[str, object]:
         timestamp = current_timestamp_iso()
         agents = normalize_agent_runs(run.get("agents"))
+        result_details = result_payload if isinstance(result_payload, dict) else {}
+        memory_candidate_ids = gui_memory.normalize_string_list(result_details.get("memoryCandidateIds"), limit=24)
         for agent in agents:
             if agent.get("agentId") == agent_id:
                 agent["status"] = "done"
                 agent["resultCommentId"] = comment_id
+                agent["memoryCandidateIds"] = memory_candidate_ids
                 agent["error"] = None
                 agent["finishedAt"] = timestamp
                 break
+        result = {"agentId": agent_id, "commentId": comment_id, "createdAt": timestamp}
+        for key in (
+            "runMode",
+            "structuredOutput",
+            "structuredOutputError",
+            "memoryCandidateIds",
+            "memoryCandidateCount",
+            "memoryCandidateErrors",
+            "openQuestions",
+        ):
+            if key in result_details:
+                result[key] = result_details[key]
         run["agents"] = agents
         run["results"] = [
             *normalize_results(run.get("results")),
-            {"agentId": agent_id, "commentId": comment_id, "createdAt": timestamp},
+            result,
         ]
         return finish_if_terminal(run)
 
@@ -343,6 +367,7 @@ def normalize_run(record: Any, payload: dict[str, object]) -> dict[str, object]:
         "annotationId": str(payload.get("annotationId") or "").strip(),
         "agents": normalize_agent_runs(payload.get("agents")),
         "status": status,
+        "runMode": normalize_run_mode(payload.get("runMode")),
         "userMessage": str(payload.get("userMessage") or ""),
         "followUpCommentId": str(payload.get("followUpCommentId") or "").strip() or None,
         "followUpAgentId": str(payload.get("followUpAgentId") or "").strip() or None,
@@ -375,6 +400,7 @@ def normalize_agent_runs(value: object) -> list[dict[str, object]]:
                 "agentName": str(item.get("agentName") or item.get("name") or "共读助手").strip() or "共读助手",
                 "status": status,
                 "resultCommentId": str(item.get("resultCommentId") or "").strip() or None,
+                "memoryCandidateIds": gui_memory.normalize_string_list(item.get("memoryCandidateIds"), limit=24),
                 "error": str(item.get("error") or "").strip() or None,
                 "startedAt": str(item.get("startedAt")) if item.get("startedAt") else None,
                 "finishedAt": str(item.get("finishedAt")) if item.get("finishedAt") else None,
@@ -393,6 +419,13 @@ def normalize_errors(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def normalize_run_mode(value: object) -> str:
+    run_mode = str(value or "comment").strip()
+    if run_mode not in RUN_MODES:
+        return "comment"
+    return run_mode
 
 
 def parse_timestamp(value: str) -> datetime | None:

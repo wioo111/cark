@@ -25,13 +25,29 @@ class GuiSearchTests(unittest.TestCase):
             root = Path(temp_dir)
             memory_root = root / "memory"
             record = fake_record(root)
-            create_memory_item(
+            memory_item = create_memory_item(
                 record,
                 memory_root,
                 {
                     "type": "insight",
                     "text": "Durable memory about interaction design.",
                     "tags": ["interaction"],
+                    "sourceAnnotationId": "annotation-1",
+                    "locator": {
+                        "view": "linearized",
+                        "annotationId": "annotation-1",
+                        "quote": "Explicit locator quote",
+                    },
+                },
+            )
+            candidate_item = create_memory_item(
+                record,
+                memory_root,
+                {
+                    "type": "insight",
+                    "text": "Candidate memory about interaction should not leak.",
+                    "tags": ["interaction"],
+                    "activationStatus": "candidate",
                 },
             )
             create_memory_item(
@@ -103,13 +119,29 @@ class GuiSearchTests(unittest.TestCase):
             memory_root = root / "memory"
             record = fake_record(root)
             store = WorkbenchStore(root / "cark.sqlite3")
-            create_memory_item(
+            memory_item = create_memory_item(
                 record,
                 memory_root,
                 {
                     "type": "insight",
                     "text": "Durable memory about interaction design.",
                     "tags": ["interaction"],
+                    "sourceAnnotationId": "annotation-1",
+                    "locator": {
+                        "view": "linearized",
+                        "annotationId": "annotation-1",
+                        "quote": "Explicit locator quote",
+                    },
+                },
+            )
+            candidate_item = create_memory_item(
+                record,
+                memory_root,
+                {
+                    "type": "insight",
+                    "text": "Candidate memory about interaction should not leak.",
+                    "tags": ["interaction"],
+                    "activationStatus": "candidate",
                 },
             )
             store.replace_search_entries(
@@ -127,16 +159,28 @@ class GuiSearchTests(unittest.TestCase):
                         "haystack": "where the action is this paper studies embodied interaction and situated action",
                     },
                     {
-                        "id": "paper-1:memory:memory-1",
+                        "id": f"paper-1:memory:{memory_item['id']}",
                         "paperId": "paper-1",
                         "paperTitle": "Where the Action Is",
                         "source": "memory",
                         "sourceLabel": "记忆",
                         "view": "linearized",
                         "annotationId": None,
-                        "memoryItemId": "memory-1",
+                        "memoryItemId": memory_item["id"],
                         "text": "Durable memory about interaction design.",
                         "haystack": "where the action is durable memory about interaction design",
+                    },
+                    {
+                        "id": f"paper-1:memory:{candidate_item['id']}",
+                        "paperId": "paper-1",
+                        "paperTitle": "Where the Action Is",
+                        "source": "memory",
+                        "sourceLabel": "璁板繂",
+                        "view": "linearized",
+                        "annotationId": None,
+                        "memoryItemId": candidate_item["id"],
+                        "text": "Candidate memory about interaction should not leak.",
+                        "haystack": "where the action is candidate memory about interaction should not leak",
                     },
                 ],
                 "2026-06-18T00:00:00",
@@ -153,6 +197,10 @@ class GuiSearchTests(unittest.TestCase):
 
             self.assertEqual({result["source"] for result in results}, {"body", "memory"})
             self.assertEqual(results[0]["source"], "memory")
+            self.assertEqual(results[0]["memoryItemId"], memory_item["id"])
+            self.assertEqual(results[0]["annotationId"], "annotation-1")
+            self.assertEqual(results[0]["locator"]["memoryItemId"], memory_item["id"])
+            self.assertFalse(any(result.get("memoryItemId") == candidate_item["id"] for result in results))
 
 
 if __name__ == "__main__":

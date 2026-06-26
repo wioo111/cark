@@ -39,6 +39,7 @@ class GuiRoutesAppTests(unittest.TestCase):
             list_papers=Mock(),
             search_records=search_records,
             list_memory_candidates=Mock(),
+            list_memory_research_state=Mock(),
         )
 
         self.assertTrue(handled)
@@ -60,6 +61,7 @@ class GuiRoutesAppTests(unittest.TestCase):
             list_papers=Mock(),
             search_records=Mock(),
             list_memory_candidates=Mock(),
+            list_memory_research_state=Mock(),
         )
 
         self.assertTrue(handled)
@@ -141,11 +143,35 @@ class GuiRoutesAppTests(unittest.TestCase):
             list_papers=Mock(),
             search_records=Mock(),
             list_memory_candidates=list_memory_candidates,
+            list_memory_research_state=Mock(),
         )
 
         self.assertTrue(handled)
         list_memory_candidates.assert_called_once_with()
         self.assertEqual(handler.json_calls, [({"items": [], "count": 0}, HTTPStatus.OK)])
+
+    def test_handle_get_memory_research_state_returns_payload(self):
+        handler = FakeHandler()
+        list_memory_research_state = Mock(return_value={"recentInsights": [], "openQuestions": []})
+
+        handled = gui_routes_app.handle_get(
+            handler,
+            urlparse("/api/memory/research-state"),
+            load_settings=Mock(),
+            detect_capabilities=Mock(),
+            list_tasks=Mock(),
+            build_agent_memory_payload=Mock(),
+            zotero_status=Mock(),
+            list_zotero_papers=Mock(),
+            list_papers=Mock(),
+            search_records=Mock(),
+            list_memory_candidates=Mock(),
+            list_memory_research_state=list_memory_research_state,
+        )
+
+        self.assertTrue(handled)
+        list_memory_research_state.assert_called_once_with()
+        self.assertEqual(handler.json_calls, [({"recentInsights": [], "openQuestions": []}, HTTPStatus.OK)])
 
     def test_handle_post_activate_memory_candidate(self):
         handler = FakeHandler()
