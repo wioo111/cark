@@ -33,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--runtime-root",
+        help="使用指定运行目录启动服务。默认使用仓库 runtime；demo 可传 runtime/demo-smoke。",
+    )
     return parser
 
 
@@ -89,6 +93,8 @@ def main(
         print(f"无法启动 cark GUI: {error}", file=stderr)
         return 2
     print(f"cark GUI listening on http://{args.host}:{args.port}/")
+    if args.runtime_root:
+        print(f"[cark-gui] 使用运行目录: {args.runtime_root}")
     if interrupted_count:
         print(f"[cark-gui] 已将 {interrupted_count} 个未完成任务标记为已中断。")
     if copilot_recovery.get("expired"):

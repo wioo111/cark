@@ -201,6 +201,40 @@ class GuiRoutesAppTests(unittest.TestCase):
         activate_memory_candidate.assert_called_once_with("memory-1")
         self.assertEqual(handler.json_calls, [({"id": "memory-1", "activationStatus": "active"}, HTTPStatus.OK)])
 
+    def test_handle_post_settings_test_passes_agent_id(self):
+        handler = FakeHandler()
+        run_connection_test = Mock(return_value={"ok": True, "message": "ok"})
+
+        handled = gui_routes_app.handle_post(
+            handler,
+            urlparse("/api/settings/test"),
+            read_json_body=Mock(
+                return_value={
+                    "target": "copilot_agent",
+                    "agentId": "agent-a",
+                    "settings": {"copilot": {"agents": []}},
+                }
+            ),
+            read_binary_body=Mock(),
+            save_settings=Mock(),
+            create_agent_memory_item=Mock(),
+            run_connection_test=run_connection_test,
+            ensure_upload_ready=Mock(),
+            create_upload_task=Mock(),
+            import_zotero_paper=Mock(),
+            retry_upload_task=Mock(),
+            activate_memory_candidate=Mock(),
+            archive_memory_candidate=Mock(),
+            get_record=Mock(),
+            resolve_open_target=Mock(),
+            open_in_explorer=Mock(),
+            runtime_output_dir=Path("."),
+        )
+
+        self.assertTrue(handled)
+        run_connection_test.assert_called_once_with("copilot_agent", {"copilot": {"agents": []}}, "agent-a")
+        self.assertEqual(handler.json_calls, [({"ok": True, "message": "ok"}, HTTPStatus.OK)])
+
     def test_handle_patch_agent_memory_updates_item(self):
         handler = FakeHandler()
         update_agent_memory_item = Mock(return_value={"id": "memory-1"})

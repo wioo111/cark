@@ -36,12 +36,35 @@ from process_utils import is_process_alive
 WORKBENCH_ROOT = Path(__file__).resolve().parents[1]
 GUI_DIST_DIR = WORKBENCH_ROOT / "gui" / "dist"
 CONFIG_DIR = WORKBENCH_ROOT / "config"
-RUNTIME_OUTPUT_DIR = WORKBENCH_ROOT / "runtime" / "output"
-MEMORY_ROOT_DIR = WORKBENCH_ROOT / "runtime" / "memory"
-DATABASE_PATH = WORKBENCH_ROOT / "runtime" / "cark.sqlite3"
-INSTANCE_LOCK_PATH = WORKBENCH_ROOT / "runtime" / "locks" / "gui_server.lock"
+
+
+def resolve_runtime_root(
+    argv: list[str] | None = None,
+    environ: dict[str, str] | None = None,
+) -> Path:
+    environ = environ if environ is not None else os.environ
+    argv = argv if argv is not None else sys.argv[1:]
+    runtime_value = str(environ.get("CARK_RUNTIME_ROOT") or "").strip()
+    if not runtime_value:
+        for index, item in enumerate(argv):
+            if item == "--runtime-root" and index + 1 < len(argv):
+                runtime_value = argv[index + 1]
+                break
+            if item.startswith("--runtime-root="):
+                runtime_value = item.split("=", 1)[1]
+                break
+    if runtime_value:
+        return Path(runtime_value).expanduser().resolve()
+    return WORKBENCH_ROOT / "runtime"
+
+
+RUNTIME_ROOT_DIR = resolve_runtime_root()
+RUNTIME_OUTPUT_DIR = RUNTIME_ROOT_DIR / "output"
+MEMORY_ROOT_DIR = RUNTIME_ROOT_DIR / "memory"
+DATABASE_PATH = RUNTIME_ROOT_DIR / "cark.sqlite3"
+INSTANCE_LOCK_PATH = RUNTIME_ROOT_DIR / "locks" / "gui_server.lock"
 GUI_SETTINGS_PATH = CONFIG_DIR / "gui_settings.json"
-GUI_UPLOADS_DIR = WORKBENCH_ROOT / "runtime" / "uploads" / "gui"
+GUI_UPLOADS_DIR = RUNTIME_ROOT_DIR / "uploads" / "gui"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 UUID_DIR_RE = re.compile(r"^[0-9a-fA-F-]{32,36}$")
 PROXY_ENV_KEYS = (
@@ -113,12 +136,14 @@ detect_capabilities = partial(
 
 test_mineru_connection = gui_app_settings.test_mineru_connection
 test_translation_connection = gui_app_settings.test_translation_connection
+test_copilot_agent_connection = gui_app_settings.test_copilot_agent_connection
 
 run_connection_test = partial(
     gui_app_settings.run_connection_test,
     sanitize_settings=sanitize_gui_settings,
     test_mineru_connection_func=test_mineru_connection,
     test_translation_connection_func=test_translation_connection,
+    test_copilot_agent_connection_func=test_copilot_agent_connection,
 )
 
 snapshot_task = partial(gui_upload_tasks.snapshot_task, STORE)

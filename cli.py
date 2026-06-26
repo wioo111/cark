@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent
 SCRIPTS_DIR = ROOT / "scripts"
 CONFIG_DIR = ROOT / "config"
 VENV_SCRIPTS = ROOT / ".venv" / "Scripts"
+DEFAULT_DEMO_RUNTIME_ROOT = ROOT / "runtime" / "demo-smoke"
 PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -158,7 +159,43 @@ def build_parser():
         action="store_true",
         help="只启动本地服务，不自动打开浏览器。",
     )
+    gui_parser.add_argument(
+        "--runtime-root",
+        help="使用指定运行目录启动 GUI，适合打开隔离 demo 数据。默认使用仓库 runtime。",
+    )
     gui_parser.set_defaults(handler=handle_gui)
+
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="生成可演示的本地研究记忆 demo。",
+    )
+    demo_parser.add_argument(
+        "--runtime-root",
+        help="demo 运行目录。默认 runtime/demo-smoke。",
+    )
+    demo_parser.add_argument(
+        "--no-reset",
+        action="store_true",
+        help="复用已有 demo 运行目录，不重新生成。",
+    )
+    demo_parser.add_argument(
+        "--force-reset",
+        action="store_true",
+        help="允许重建仓库 runtime 之外的自定义 demo 目录。",
+    )
+    demo_parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="生成 demo 后直接启动 GUI 打开这套数据。",
+    )
+    demo_parser.add_argument("--host", default="127.0.0.1", help="GUI 监听地址。默认 127.0.0.1。")
+    demo_parser.add_argument("--port", type=int, default=8765, help="GUI 端口。默认 8765。")
+    demo_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="配合 --gui 使用，只启动本地服务，不自动打开浏览器。",
+    )
+    demo_parser.set_defaults(handler=handle_demo)
 
     upload_parser = subparsers.add_parser(
         "upload",
@@ -211,7 +248,33 @@ def handle_gui(args):
     forwarded = ["--host", args.host, "--port", str(args.port)]
     if args.no_browser:
         forwarded.append("--no-browser")
+    if args.runtime_root:
+        forwarded.extend(["--runtime-root", str(args.runtime_root)])
     return run_python_script("gui_server.py", forwarded)
+
+
+def handle_demo(args):
+    runtime_root = Path(args.runtime_root).expanduser() if args.runtime_root else DEFAULT_DEMO_RUNTIME_ROOT
+    smoke_args = ["--runtime-root", str(runtime_root)]
+    if args.no_reset:
+        smoke_args.append("--no-reset")
+    if args.force_reset:
+        smoke_args.append("--force-reset")
+    smoke_result = run_python_script("smoke_demo.py", smoke_args)
+    if smoke_result != 0 or not args.gui:
+        return smoke_result
+
+    gui_args = [
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--runtime-root",
+        str(runtime_root),
+    ]
+    if args.no_browser:
+        gui_args.append("--no-browser")
+    return run_python_script("gui_server.py", gui_args)
 
 
 def forward_common_publish_args(args):

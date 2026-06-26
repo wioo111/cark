@@ -96,15 +96,32 @@ def sanitize_gui_settings(
         agent_id = str(item.get("id") or default_agent["id"] or f"agent-{index + 1}").strip()
         if not agent_id:
             agent_id = f"agent-{index + 1}"
+        raw_name = item.get("name")
+        raw_role_prompt = item.get("rolePrompt")
+        name = str(raw_name if raw_name is not None else f"共读助手 {index + 1}").strip()
+        role_prompt = str(raw_role_prompt if raw_role_prompt is not None else default_agent["rolePrompt"]).strip()
+        api_key = str(item.get("apiKey") or "").strip()
+        base_url = str(item.get("baseUrl") or default_agent["baseUrl"]).strip()
+        model = str(item.get("model") or default_agent["model"]).strip()
+        enabled = bool(item.get("enabled", True))
+        if enabled and (
+            (raw_name is not None and not str(raw_name).strip())
+            or (raw_role_prompt is not None and not str(raw_role_prompt).strip())
+            or not api_key
+            or not base_url
+            or not model
+        ):
+            enabled = False
         agents.append(
             {
                 "id": agent_id,
-                "enabled": bool(item.get("enabled", True)),
-                "name": str(item.get("name") or f"共读助手 {index + 1}").strip() or f"共读助手 {index + 1}",
-                "rolePrompt": str(item.get("rolePrompt") or default_agent["rolePrompt"]).strip(),
-                "apiKey": str(item.get("apiKey") or "").strip(),
-                "baseUrl": str(item.get("baseUrl") or default_agent["baseUrl"]).strip(),
-                "model": str(item.get("model") or default_agent["model"]).strip(),
+                "enabled": enabled,
+                "name": name or f"共读助手 {index + 1}",
+                "description": str(item.get("description") or "").strip(),
+                "rolePrompt": role_prompt or str(default_agent["rolePrompt"]).strip(),
+                "apiKey": api_key,
+                "baseUrl": base_url,
+                "model": model,
             }
         )
     if not agents:
@@ -386,13 +403,80 @@ def test_translation_connection(
     }
 
 
+def test_copilot_agent_connection(
+    settings: dict[str, object],
+    *,
+    agent_id: str | None = None,
+    requests_post: Callable[..., Any] = requests.post,
+) -> dict[str, object]:
+    agent = select_copilot_agent(settings, agent_id=agent_id)
+    missing_fields = [
+        label
+        for key, label in (
+            ("name", "名称"),
+            ("rolePrompt", "身份注入"),
+            ("apiKey", "API Key"),
+            ("baseUrl", "Base URL"),
+            ("model", "模型"),
+        )
+        if not str(agent.get(key) or "").strip()
+    ]
+    if missing_fields:
+        raise ValueError("请先补齐智能体配置：" + "、".join(missing_fields))
+
+    base_url = str(agent["baseUrl"]).strip()
+    payload = {
+        "model": str(agent["model"]).strip(),
+        "messages": [
+            {"role": "system", "content": str(agent["rolePrompt"]).strip()},
+            {"role": "user", "content": "Reply with exactly: ok"},
+        ],
+        "temperature": 0,
+        "max_tokens": 8,
+    }
+    response = requests_post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {str(agent['apiKey']).strip()}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+    result = response.json()
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    preview = str(content).strip()[:120]
+    return {
+        "ok": True,
+        "message": f"{agent['name']} 可用于共读",
+        "detail": f"模型返回: {preview or 'ok'}",
+    }
+
+
+def select_copilot_agent(settings: dict[str, object], *, agent_id: str | None = None) -> dict[str, object]:
+    copilot = settings.get("copilot") if isinstance(settings.get("copilot"), dict) else {}
+    agents = copilot.get("agents") if isinstance(copilot.get("agents"), list) else []
+    normalized_agents = [item for item in agents if isinstance(item, dict)]
+    if not normalized_agents:
+        raise ValueError("没有可测试的共读智能体")
+    if agent_id:
+        for agent in normalized_agents:
+            if str(agent.get("id") or "") == agent_id:
+                return agent
+        raise ValueError("未找到指定共读智能体")
+    return normalized_agents[0]
+
+
 def run_connection_test(
     target: str,
     settings_payload: dict[str, object],
+    agent_id: str | None = None,
     *,
     sanitize_settings: Callable[[dict[str, object]], dict[str, object]],
     test_mineru_connection_func: Callable[[dict[str, object]], dict[str, object]] = test_mineru_connection,
     test_translation_connection_func: Callable[[dict[str, object]], dict[str, object]] = test_translation_connection,
+    test_copilot_agent_connection_func: Callable[..., dict[str, object]] = test_copilot_agent_connection,
 ) -> dict[str, object]:
     settings = sanitize_settings(settings_payload)
     try:
@@ -400,6 +484,8 @@ def run_connection_test(
             return test_mineru_connection_func(settings)
         if target == "translation":
             return test_translation_connection_func(settings)
+        if target == "copilot_agent":
+            return test_copilot_agent_connection_func(settings, agent_id=agent_id)
         raise ValueError("未知测试目标")
     except Exception as error:
         return {

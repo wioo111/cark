@@ -25,6 +25,7 @@ import type {
   ReadingState,
   MemoryResearchStatePayload,
   SearchResult,
+  SettingsConnectionTestTarget,
   UpdateAgentMemoryInput,
   UpdateAnnotationCommentInput,
   UpdatePaperLibraryInput,
@@ -39,6 +40,7 @@ function createDefaultCopilotAgent(overrides?: Partial<CopilotAgentConfig>): Cop
     id: 'agent-default',
     enabled: true,
     name: '共读助手',
+    description: '围绕划线句子解释、质疑，并沉淀可复用研究判断。',
     rolePrompt: '你是用户的论文共读伙伴。先完整理解论文，再围绕用户划线句子的上下文给出具体、克制、有判断的评论。',
     apiKey: '',
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -60,6 +62,7 @@ function normalizeSettingsPayload(payload: unknown): AppSettings {
             id: String(agent.id || `agent-${index + 1}`),
             enabled: Boolean(agent.enabled ?? true),
             name: String(agent.name || `共读助手 ${index + 1}`),
+            description: String(agent.description || ''),
             rolePrompt: String(agent.rolePrompt || createDefaultCopilotAgent().rolePrompt),
             apiKey: String(agent.apiKey || ''),
             baseUrl: String(agent.baseUrl || 'https://openrouter.ai/api/v1'),
@@ -110,8 +113,8 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
     const message = await response.text()
     let parsedError: string | null = null
     try {
-      const parsed = JSON.parse(message) as { error?: string }
-      parsedError = parsed.error ?? null
+      const parsed = JSON.parse(message) as { error?: string; message?: string }
+      parsedError = parsed.error ?? parsed.message ?? null
     } catch {
       parsedError = null
     }
@@ -488,7 +491,11 @@ export function saveSettings(payload: AppSettings) {
   ).then((response) => normalizeSettingsPayload(response))
 }
 
-export function postSettingsConnectionTest(target: 'mineru' | 'translation', settings: AppSettings) {
+export function postSettingsConnectionTest(
+  target: SettingsConnectionTestTarget,
+  settings: AppSettings,
+  options?: { agentId?: string },
+) {
   return requestJson<ConnectionTestResult>(
     '/api/settings/test',
     {
@@ -496,7 +503,7 @@ export function postSettingsConnectionTest(target: 'mineru' | 'translation', set
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ target, settings }),
+      body: JSON.stringify({ target, settings, agentId: options?.agentId }),
     },
   )
 }
