@@ -13,11 +13,13 @@ verification gates.
 - Production build: `npm run build` from `gui/`
 - Python syntax check: `python -m compileall -q cli.py scripts`
 
-Latest local audit result: 44 frontend tests and 65 Python tests passed, lint
-and the production build passed, Python compilation passed, and the real
-SQLite database reported `integrity_check=ok`. The 48-paper runtime generated
-144 persistent FTS5 entries; English and Chinese control queries both returned
-locatable results.
+Latest local audit result on 2026-06-29: 19 frontend test files / 65 frontend
+tests passed, 124 Python tests passed, lint and the production build passed,
+Python compilation passed, `scripts/smoke_demo.ps1` completed the no-key demo
+research-memory flow, and `git diff --check` reported no whitespace errors. A
+local `cark doctor` run also verified the new delivery-surface checks; this
+machine still reports missing local parser dependencies (`onnxruntime` and
+`torch`), so local MinerU parsing remains an environment setup item here.
 
 ## Runtime Data
 
