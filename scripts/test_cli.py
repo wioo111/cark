@@ -10,6 +10,24 @@ import cli
 
 
 class CliDemoTests(unittest.TestCase):
+    def test_doctor_defaults_to_demo_profile(self):
+        args = cli.build_parser().parse_args(["doctor"])
+
+        with patch("cli.run_python_script", return_value=0) as run_script:
+            result = cli.handle_doctor(args)
+
+        self.assertEqual(result, 0)
+        run_script.assert_called_once_with("preflight.py", ["--profile", "demo"])
+
+    def test_doctor_can_run_strict_local_profile(self):
+        args = cli.build_parser().parse_args(["doctor", "--profile", "local"])
+
+        with patch("cli.run_python_script", return_value=1) as run_script:
+            result = cli.handle_doctor(args)
+
+        self.assertEqual(result, 1)
+        run_script.assert_called_once_with("preflight.py", ["--profile", "local"])
+
     def test_demo_generates_smoke_runtime_without_gui(self):
         args = cli.build_parser().parse_args(["demo", "--runtime-root", "runtime/demo-smoke"])
 

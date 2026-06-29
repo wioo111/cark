@@ -13,12 +13,15 @@
 
 用法：
     .venv/Scripts/python.exe scripts/preflight.py
+    .venv/Scripts/python.exe scripts/preflight.py --profile local
 
-退出码：0=全绿或仅警告；1=有致命项（建议先处理再跑解析）。
+退出码：0=全绿或仅警告；1=有致命项。默认 profile 面向 GUI/demo/云解析；
+本地 MinerU 解析前请用 --profile local 做严格检查。
 """
 
 from __future__ import annotations
 
+import argparse
 import ctypes
 import os
 import sys
@@ -67,7 +70,7 @@ class _MEMORYSTATUSEX(ctypes.Structure):
     ]
 
 
-def check_memory() -> None:
+def check_memory(*, strict: bool) -> None:
     if os.name != "nt":
         _warn("非 Windows，跳过内存/commit 检查")
         return
@@ -81,7 +84,11 @@ def check_memory() -> None:
     msg = f"内存占用 {load}% | 可用物理 {avail_phys}MB | commit 可用 {commit_avail}MB"
     # commit 余量是 CUDA DLL 加载成败的关键。低于 2GB 风险高。
     if commit_avail < 2048:
-        _fail(msg + "  → commit 余量 < 2GB，CUDA DLL 加载可能触发 WinError 1455，建议清理进程")
+        message = msg + "  → commit 余量 < 2GB，CUDA DLL 加载可能触发 WinError 1455，建议清理进程"
+        if strict:
+            _fail(message)
+        else:
+            _warn(message + "；demo/云解析通常仍可继续")
     elif commit_avail < 4096:
         _warn(msg + "  → commit 余量偏低")
     else:
@@ -177,12 +184,16 @@ def check_wmi() -> None:
     return
 
 
-def check_onnxruntime() -> None:
+def check_onnxruntime(*, strict: bool) -> None:
     start = time.time()
     try:
         import onnxruntime  # noqa: F401
     except Exception as exc:
-        _fail(f"import onnxruntime 失败: {exc}")
+        message = f"import onnxruntime 失败: {exc}"
+        if strict:
+            _fail(message)
+        else:
+            _warn(message + "（demo/云解析不受影响；本地解析前请运行 cark doctor --profile local）")
         return
     elapsed = time.time() - start
     if elapsed > 10:
@@ -191,11 +202,15 @@ def check_onnxruntime() -> None:
         _ok(f"onnxruntime 导入正常（{elapsed:.1f}s, v{onnxruntime.__version__}）")
 
 
-def check_torch() -> None:
+def check_torch(*, strict: bool) -> None:
     try:
         import torch
     except Exception as exc:
-        _fail(f"import torch 失败: {exc}")
+        message = f"import torch 失败: {exc}"
+        if strict:
+            _fail(message)
+        else:
+            _warn(message + "（demo/云解析不受影响；本地解析前请运行 cark doctor --profile local）")
         return
     cuda = torch.cuda.is_available()
     if cuda:
@@ -265,6 +280,7 @@ def check_cark_delivery_surface(workbench_root: Path = WORKBENCH_ROOT) -> None:
 
 def print_follow_up_hints() -> None:
     print("无 API key 演示：cark demo；打开演示 GUI：cark demo --gui")
+    print("严格本地解析体检：cark doctor --profile local")
     print("Windows 使用说明：docs/windows-usage.md")
 
 
@@ -310,18 +326,39 @@ def run_quick_check() -> tuple:
     return warnings_list, fatals_list
 
 
-def main() -> int:
-    print("=== cark 运行前体检 ===\n")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="preflight.py",
+        description="Run cark environment and delivery checks.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=["demo", "local"],
+        default="demo",
+        help="demo: GUI/demo/cloud-ready checks; local: strict local MinerU parser checks.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    global _fatal, _warns
+    _fatal = 0
+    _warns = 0
+    args = build_parser().parse_args(argv)
+    strict_local = args.profile == "local"
+    profile_label = "本地解析严格体检" if strict_local else "GUI/demo 体检"
+
+    print(f"=== cark 运行前体检（{profile_label}） ===\n")
     check_disk()
-    check_memory()
+    check_memory(strict=strict_local)
     check_wmi()
-    check_onnxruntime()
-    check_torch()
+    check_onnxruntime(strict=strict_local)
+    check_torch(strict=strict_local)
     check_orphan_processes()
     check_cark_delivery_surface()
     print()
     if _fatal:
-        print(f"结论：{_fatal} 项致命、{_warns} 项警告。建议先处理致命项再跑解析。")
+        print(f"结论：{_fatal} 项致命、{_warns} 项警告。建议先处理致命项。")
         print("修复后建议再跑：cark doctor")
         print_follow_up_hints()
         return 1

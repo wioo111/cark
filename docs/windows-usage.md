@@ -32,9 +32,17 @@ Run the environment doctor first:
 cark doctor
 ```
 
-The doctor checks disk space, memory/commit headroom, WMI behavior, `onnxruntime`, `torch`, residual MinerU processes, GUI build output, demo smoke scripts, and runtime writability.
+The default doctor profile checks whether the GUI, demo, cloud parsing path, and local runtime are ready. It checks disk space, memory/commit headroom, WMI behavior, local parser imports, residual MinerU processes, GUI build output, demo smoke scripts, and runtime writability.
 
-Warnings do not always block usage. Fatal items should be fixed before local parsing.
+Missing `onnxruntime` or `torch` is a warning in the default profile because the no-key demo and cloud parsing can still run without local MinerU parsing.
+
+Before using local MinerU parsing, run the strict local parser profile:
+
+```powershell
+cark doctor --profile local
+```
+
+Warnings do not always block usage. Fatal items in the strict local profile should be fixed before local parsing.
 
 ## Run The Demo
 
@@ -156,7 +164,7 @@ If demo reset fails because the runtime is in use, close the demo GUI and run:
 cark demo --force-reset
 ```
 
-If local parsing is not available, switch to cloud parsing in settings or rerun the MinerU setup script.
+If local parsing is not available, switch to cloud parsing in settings, rerun the MinerU setup script, or verify with `cark doctor --profile local`.
 
 ## Developer Quality Gate
 
@@ -170,6 +178,7 @@ npm run build
 
 cd ..
 python -m compileall -q cli.py scripts
+cark doctor
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke_demo.ps1
 git diff --check
 ```
@@ -184,3 +193,5 @@ git diff --check
 4. Open the demo paper.
 5. Show the annotation, agent comment, candidate memory, activated memory, search result, and Markdown export.
 6. Open settings and show the agent connection test state.
+
+For a local parsing recording, run `cark doctor --profile local` before uploading a real PDF.

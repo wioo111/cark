@@ -14,12 +14,13 @@ verification gates.
 - Python syntax check: `python -m compileall -q cli.py scripts`
 
 Latest local audit result on 2026-06-29: 19 frontend test files / 65 frontend
-tests passed, 124 Python tests passed, lint and the production build passed,
-Python compilation passed, `scripts/smoke_demo.ps1` completed the no-key demo
-research-memory flow, and `git diff --check` reported no whitespace errors. A
-local `cark doctor` run also verified the new delivery-surface checks; this
-machine still reports missing local parser dependencies (`onnxruntime` and
-`torch`), so local MinerU parsing remains an environment setup item here.
+tests passed, 128 Python tests passed, lint and the production build passed,
+Python compilation passed, `cark doctor` completed in the default demo profile,
+`scripts/smoke_demo.ps1` completed the no-key demo research-memory flow, and
+`git diff --check` reported no whitespace errors. This machine still reports
+missing local parser dependencies (`onnxruntime` and `torch`) under
+`cark doctor --profile local`, so local MinerU parsing remains an environment
+setup item here.
 
 ## Runtime Data
 
