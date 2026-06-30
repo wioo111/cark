@@ -133,6 +133,7 @@ class GuiMemoryTests(unittest.TestCase):
                 "quote": "Important sentence.",
                 "contextBefore": "Before",
                 "contextAfter": "After",
+                "blockId": "block-1",
                 "anchorTop": 12,
                 "anchorHeight": 20,
             }
@@ -147,8 +148,11 @@ class GuiMemoryTests(unittest.TestCase):
             self.assertEqual(item["sourceAnnotationId"], "annotation-1")
             self.assertEqual(item["quote"], "Important sentence.")
             self.assertEqual(item["anchor"]["view"], "linearized")
+            self.assertEqual(item["blockId"], "block-1")
+            self.assertEqual(item["locator"]["blockId"], "block-1")
             self.assertEqual(item["source"]["annotationId"], "annotation-1")
             self.assertEqual(item["evidence"][0]["kind"], "annotation")
+            self.assertEqual(item["evidence"][0]["blockId"], "block-1")
 
     def test_candidate_memory_is_separated_from_behavioral_items(self):
         with tempfile.TemporaryDirectory() as temp_dir:
