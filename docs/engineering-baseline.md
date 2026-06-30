@@ -13,7 +13,7 @@ verification gates.
 - Production build: `npm run build` from `gui/`
 - Python syntax check: `python -m compileall -q cli.py scripts`
 
-Latest local audit result on 2026-06-30: 19 frontend test files / 65 frontend
+Latest local audit result on 2026-06-30: 19 frontend test files / 66 frontend
 tests passed, 129 Python tests passed, lint and the production build passed,
 Python compilation passed, `cark doctor` completed in the default demo profile,
 `scripts/smoke_demo.ps1` completed the no-key demo research-memory flow, and
