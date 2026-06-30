@@ -34,6 +34,8 @@ export function CommentLane({
   copilotRuns,
   memorySavingAnnotationIds,
   memorySavedAnnotationIds,
+  memorySavingAgentCommentIds,
+  memorySavedAgentCommentIds,
   draft,
   savingDraft,
   replyDraft,
@@ -59,6 +61,7 @@ export function CommentLane({
   onArchiveToggle,
   onDeleteAnnotation,
   onCreateMemoryFromAnnotation,
+  onCreateMemoryFromAgentComment,
 }: CommentLaneProps) {
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [quoteDetailAnnotation, setQuoteDetailAnnotation] = useState<PaperAnnotation | null>(null)
@@ -162,6 +165,8 @@ export function CommentLane({
             copilotRuns={copilotRuns}
             memorySavingAnnotationIds={memorySavingAnnotationIds}
             memorySavedAnnotationIds={memorySavedAnnotationIds}
+            memorySavingAgentCommentIds={memorySavingAgentCommentIds}
+            memorySavedAgentCommentIds={memorySavedAgentCommentIds}
             replyDraft={replyDraft}
             savingReply={savingReply}
             editDraft={editDraft}
@@ -181,6 +186,7 @@ export function CommentLane({
             onArchiveToggle={onArchiveToggle}
             onDeleteAnnotation={onDeleteAnnotation}
             onCreateMemoryFromAnnotation={onCreateMemoryFromAnnotation}
+            onCreateMemoryFromAgentComment={onCreateMemoryFromAgentComment}
             onOpenQuoteDetail={setQuoteDetailAnnotation}
             onOpenThreadDetail={setThreadDetailAnnotation}
           />

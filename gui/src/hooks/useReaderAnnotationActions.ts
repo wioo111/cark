@@ -5,6 +5,7 @@ import {
   patchAnnotationComment,
   patchPaperAnnotation,
   postAnnotationComment,
+  postAnnotationMemoryCandidates,
   postAnnotationMemoryItem,
 } from '@/api'
 import type {
@@ -13,8 +14,9 @@ import type {
   AnnotationReplyDraft,
   AnnotationReplyTarget,
 } from '@/components/CommentLane'
-import type { CopilotRunMode, CreateCopilotRunInput, PaperAnnotation, PaperDetail } from '@/types'
+import type { AnnotationComment, CopilotRunMode, CreateCopilotRunInput, PaperAnnotation, PaperDetail } from '@/types'
 import {
+  buildMemoryTextFromAgentComment,
   buildMemoryTextFromAnnotation,
   findExistingAnnotationId,
   formatAnnotationError,
@@ -62,11 +64,17 @@ export function useReaderAnnotationActions({
   const [savingEdit, setSavingEdit] = useState(false)
   const [memorySaveCounts, setMemorySaveCounts] = useState<Record<string, number>>({})
   const [memorySavedAnnotationIds, setMemorySavedAnnotationIds] = useState<string[]>([])
+  const [agentMemorySaveCounts, setAgentMemorySaveCounts] = useState<Record<string, number>>({})
+  const [memorySavedAgentCommentIds, setMemorySavedAgentCommentIds] = useState<string[]>([])
   const [memoryNotice, setMemoryNotice] = useState<string | null>(null)
 
   const memorySavingAnnotationIds = useMemo(
     () => Object.entries(memorySaveCounts).filter(([, count]) => count > 0).map(([annotationId]) => annotationId),
     [memorySaveCounts],
+  )
+  const memorySavingAgentCommentIds = useMemo(
+    () => Object.entries(agentMemorySaveCounts).filter(([, count]) => count > 0).map(([commentId]) => commentId),
+    [agentMemorySaveCounts],
   )
 
   function handleDraftStart() {
@@ -356,6 +364,51 @@ export function useReaderAnnotationActions({
     }
   }
 
+  async function handleCreateMemoryFromAgentComment(annotation: PaperAnnotation, comment: AnnotationComment) {
+    if (!detail || (agentMemorySaveCounts[comment.id] ?? 0) > 0) {
+      return
+    }
+
+    const text = buildMemoryTextFromAgentComment(comment)
+    if (!text) {
+      setAnnotationError('这条共读回复没有可沉淀的内容')
+      return
+    }
+
+    updateAgentMemorySaveCount(comment.id, 1)
+    setAnnotationError(null)
+    try {
+      const payload = await postAnnotationMemoryCandidates(detail.id, annotation.id, {
+        sourceCommentId: comment.id,
+        agentId: comment.agentId ?? null,
+        runMode: comment.runMode,
+        items: [
+          {
+            type: inferMemoryItemType(text),
+            text,
+            tags: ['agent', 'agent_comment'],
+            confidence: 0.72,
+            evidenceQuote: annotation.quote,
+          },
+        ],
+      })
+      const createdIds = payload.created.map((item) => item.id)
+      updateAgentCommentMemoryState(annotation.id, comment.id, createdIds)
+      setMemoryRefreshKey((current) => current + 1)
+      setMemoryOpen(true)
+      setMemoryNotice('已从共读回复生成候选记忆，待确认')
+      setMemorySavedAgentCommentIds((current) => (current.includes(comment.id) ? current : [...current, comment.id]))
+      window.setTimeout(() => {
+        setMemorySavedAgentCommentIds((current) => current.filter((id) => id !== comment.id))
+        setMemoryNotice(null)
+      }, 2600)
+    } catch (saveError) {
+      setAnnotationError(formatAnnotationError('从共读回复沉淀候选记忆失败', saveError))
+    } finally {
+      updateAgentMemorySaveCount(comment.id, -1)
+    }
+  }
+
   async function handleCancelCopilotRun(runId: string) {
     try {
       await cancelCopilotRun(runId)
@@ -409,6 +462,48 @@ export function useReaderAnnotationActions({
     })
   }
 
+  function updateAgentMemorySaveCount(commentId: string, delta: number) {
+    setAgentMemorySaveCounts((current) => {
+      const nextCount = Math.max((current[commentId] ?? 0) + delta, 0)
+      if (nextCount === 0) {
+        const { [commentId]: _removed, ...rest } = current
+        return rest
+      }
+      return {
+        ...current,
+        [commentId]: nextCount,
+      }
+    })
+  }
+
+  function updateAgentCommentMemoryState(annotationId: string, commentId: string, createdIds: string[]) {
+    if (createdIds.length === 0) {
+      return
+    }
+    setAnnotations((current) =>
+      current.map((annotation) => {
+        if (annotation.id !== annotationId) {
+          return annotation
+        }
+        return {
+          ...annotation,
+          comments: annotation.comments.map((comment) => {
+            if (comment.id !== commentId) {
+              return comment
+            }
+            const existingIds = Array.isArray(comment.memoryCandidateIds) ? comment.memoryCandidateIds : []
+            const nextIds = [...existingIds, ...createdIds.filter((id) => !existingIds.includes(id))]
+            return {
+              ...comment,
+              memoryCandidateIds: nextIds,
+              memoryCandidateCount: Math.max(comment.memoryCandidateCount ?? 0, nextIds.length),
+            }
+          }),
+        }
+      }),
+    )
+  }
+
   return {
     draft,
     setDraft,
@@ -421,6 +516,8 @@ export function useReaderAnnotationActions({
     savingEdit,
     memorySavingAnnotationIds,
     memorySavedAnnotationIds,
+    memorySavingAgentCommentIds,
+    memorySavedAgentCommentIds,
     memoryNotice,
     handleDraftStart,
     handleDraftSubmit,
@@ -433,6 +530,7 @@ export function useReaderAnnotationActions({
     handleArchiveToggle,
     handleDeleteAnnotation,
     handleCreateMemoryFromAnnotation,
+    handleCreateMemoryFromAgentComment,
     handleSelectionAgentAction,
     handleCancelCopilotRun,
     handleRetryCopilotRun,
