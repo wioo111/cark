@@ -146,6 +146,12 @@ def build_parser():
         "doctor",
         help="运行环境体检。",
     )
+    doctor_parser.add_argument(
+        "--profile",
+        choices=["demo", "local"],
+        default="demo",
+        help="体检范围：demo 检查 GUI/demo/云解析可交付性；local 严格检查本地 MinerU 解析依赖。",
+    )
     doctor_parser.set_defaults(handler=handle_doctor)
 
     gui_parser = subparsers.add_parser(
@@ -240,8 +246,8 @@ def build_parser():
     return parser
 
 
-def handle_doctor(_args):
-    return run_python_script("preflight.py", [])
+def handle_doctor(args):
+    return run_python_script("preflight.py", ["--profile", args.profile])
 
 
 def handle_gui(args):

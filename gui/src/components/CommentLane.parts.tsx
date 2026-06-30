@@ -39,6 +39,8 @@ export function CommentThreadCard({
   copilotRuns,
   memorySavingAnnotationIds,
   memorySavedAnnotationIds,
+  memorySavingAgentCommentIds,
+  memorySavedAgentCommentIds,
   replyDraft,
   savingReply,
   editDraft,
@@ -58,6 +60,7 @@ export function CommentThreadCard({
   onArchiveToggle,
   onDeleteAnnotation,
   onCreateMemoryFromAnnotation,
+  onCreateMemoryFromAgentComment,
   onOpenQuoteDetail,
   onOpenThreadDetail,
 }: {
@@ -68,6 +71,8 @@ export function CommentThreadCard({
   copilotRuns: CopilotRun[]
   memorySavingAnnotationIds: string[]
   memorySavedAnnotationIds: string[]
+  memorySavingAgentCommentIds: string[]
+  memorySavedAgentCommentIds: string[]
   replyDraft: AnnotationReplyDraft | null
   savingReply: boolean
   editDraft: AnnotationEditDraft | null
@@ -87,6 +92,7 @@ export function CommentThreadCard({
   onArchiveToggle: (annotationId: string, nextArchived: boolean) => void
   onDeleteAnnotation: (annotationId: string) => void
   onCreateMemoryFromAnnotation: (annotation: PaperAnnotation) => void
+  onCreateMemoryFromAgentComment: (annotation: PaperAnnotation, comment: AnnotationComment) => void
   onOpenQuoteDetail: (annotation: PaperAnnotation) => void
   onOpenThreadDetail: (annotation: PaperAnnotation) => void
 }) {
@@ -161,12 +167,16 @@ export function CommentThreadCard({
             return (
               <AgentCommentCard
                 key={comment.id}
+                annotation={annotation}
                 annotationId={annotation.id}
                 comment={comment}
                 agents={agents}
                 copilotRuns={annotationCopilotRuns}
+                memorySavingAgentCommentIds={memorySavingAgentCommentIds}
+                memorySavedAgentCommentIds={memorySavedAgentCommentIds}
                 inlineReplyDraft={inlineFollowUpReply ? replyDraft : null}
                 savingReply={savingReply}
+                onCreateMemoryFromAgentComment={onCreateMemoryFromAgentComment}
                 onReplyStart={onReplyStart}
                 onReplyChange={onReplyChange}
                 onReplyCancel={onReplyCancel}
@@ -901,23 +911,31 @@ function QuoteDetailBlock({
 }
 
 function AgentCommentCard({
+  annotation,
   annotationId,
   comment,
   agents,
   copilotRuns,
+  memorySavingAgentCommentIds,
+  memorySavedAgentCommentIds,
   inlineReplyDraft,
   savingReply,
+  onCreateMemoryFromAgentComment,
   onReplyStart,
   onReplyChange,
   onReplyCancel,
   onReplySubmit,
 }: {
+  annotation: PaperAnnotation
   annotationId: string
   comment: AnnotationComment
   agents: CopilotAgentConfig[]
   copilotRuns: CopilotRun[]
+  memorySavingAgentCommentIds: string[]
+  memorySavedAgentCommentIds: string[]
   inlineReplyDraft: AnnotationReplyDraft | null
   savingReply: boolean
+  onCreateMemoryFromAgentComment: (annotation: PaperAnnotation, comment: AnnotationComment) => void
   onReplyStart: (annotationId: string, target?: AnnotationReplyTarget) => void
   onReplyChange: (value: string) => void
   onReplyCancel: () => void
@@ -939,6 +957,9 @@ function AgentCommentCard({
     typeof comment.structuredOutput === 'boolean' ? comment.structuredOutput : Boolean(copilotResult?.structuredOutput)
   const structuredError = comment.structuredOutputError || copilotResult?.structuredOutputError
   const showNoCandidateStatus = Boolean(structuredError) || (structuredOutput && memoryCandidateCount === 0)
+  const memorySaving = memorySavingAgentCommentIds.includes(comment.id)
+  const memorySaved = memorySavedAgentCommentIds.includes(comment.id)
+  const showManualMemoryAction = comment.status === 'ready' && (memoryCandidateCount === 0 || memorySaving || memorySaved)
 
   return (
     <section className="overflow-hidden rounded-[20px] border border-sky-300/15 bg-[var(--surface-soft)]">
@@ -1032,7 +1053,31 @@ function AgentCommentCard({
             </div>
           </div>
         ) : (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {showManualMemoryAction ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCreateMemoryFromAgentComment(annotation, comment)
+                }}
+                disabled={memorySaving}
+                aria-label="Save agent reply as memory candidate"
+                className={[
+                  'inline-flex items-center gap-2 rounded-[14px] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60',
+                  memorySaved ? 'cark-button-accent' : 'cark-button-secondary',
+                ].join(' ')}
+              >
+                {memorySaving ? (
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                ) : memorySaved ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <BookMarked className="h-3.5 w-3.5" />
+                )}
+                {memorySaving ? '保存中' : memorySaved ? '已保存候选' : '保存为候选记忆'}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={(event) => {

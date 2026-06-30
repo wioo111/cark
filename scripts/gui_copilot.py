@@ -552,12 +552,19 @@ def build_agent_messages(
         agent_memory_query,
         limit=8,
     )
+    paper_memory_context = gui_memory.render_paper_memory_context(
+        record,
+        memory_root,
+        agent_memory_query,
+        limit=8,
+    )
     shared_context = "\n\n".join(
         part
         for part in (
             f"论文标题：{record.title}",
             f"当前阅读视图：{'译文版本' if view == 'bilingual' else '原文'}",
             "以下是长期全局记忆，优先用于理解用户偏好、研究方向和项目上下文；不要机械复述：\n\n" + agent_memory_context if agent_memory_context else "",
+            "以下是当前论文中已经由用户确认的研究记忆；只在和本次划线或问题相关时使用：\n\n" + paper_memory_context if paper_memory_context else "",
             "以下是论文的本地结构摘要，请先建立整体理解：\n\n" + str(active_context_cache.get("overview") or "").strip(),
             "以下是当前线程优先复用并补充后的相关正文片段：\n\n" + render_relevant_chunks(active_relevant_chunks) if active_relevant_chunks else "",
         )

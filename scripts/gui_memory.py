@@ -297,15 +297,18 @@ def create_memory_item_from_annotation(
         "quote": annotation.get("quote"),
         "contextBefore": annotation.get("contextBefore"),
         "contextAfter": annotation.get("contextAfter"),
+        "blockId": annotation.get("blockId"),
         "anchorTop": annotation.get("anchorTop"),
         "anchorHeight": annotation.get("anchorHeight"),
     }
+    block_id = payload.get("blockId") or annotation.get("blockId")
     return create_memory_item(
         record,
         memory_root,
         {
             **payload,
             "sourceAnnotationId": annotation_id,
+            "blockId": block_id,
             "quote": payload.get("quote") or annotation.get("quote"),
             "anchor": payload.get("anchor") if isinstance(payload.get("anchor"), dict) else anchor,
             "source": payload.get("source") if isinstance(payload.get("source"), dict) else {
@@ -316,7 +319,7 @@ def create_memory_item_from_annotation(
             "locator": payload.get("locator") if isinstance(payload.get("locator"), dict) else gui_locator.build_locator(
                 view=annotation.get("view"),
                 annotation_id=annotation_id,
-                block_id=payload.get("blockId"),
+                block_id=block_id,
                 quote=payload.get("quote") or annotation.get("quote"),
                 context_before=payload.get("contextBefore") or annotation.get("contextBefore"),
                 context_after=payload.get("contextAfter") or annotation.get("contextAfter"),
@@ -329,6 +332,7 @@ def create_memory_item_from_annotation(
                     "quote": annotation.get("quote"),
                     "contextBefore": annotation.get("contextBefore"),
                     "contextAfter": annotation.get("contextAfter"),
+                    "blockId": block_id,
                 }
             ],
         },
@@ -605,6 +609,70 @@ def is_behavioral_memory_item(item: dict[str, object]) -> bool:
     return str(item.get("status") or "") != "archived" and str(item.get("activationStatus") or "active") == "active"
 
 
+def select_relevant_memory_items(
+    record: Any,
+    memory_root: Path,
+    query: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, object]]:
+    terms = parse_memory_terms(query)
+    active_items = [item for item in load_memory_items(record, memory_root) if is_behavioral_memory_item(item)]
+    if not active_items:
+        return []
+    if not terms:
+        return active_items[:limit]
+
+    scored: list[tuple[int, str, dict[str, object]]] = []
+    for item in active_items:
+        haystack = normalize_for_memory_search(
+            " ".join(
+                part
+                for part in [
+                    str(item.get("type") or ""),
+                    str(item.get("text") or ""),
+                    str(item.get("quote") or ""),
+                    " ".join(str(tag) for tag in item.get("tags", []) if isinstance(tag, str)),
+                    memory_evidence_to_text(item.get("evidence")),
+                    memory_source_to_text(item.get("source")),
+                ]
+                if part
+            )
+        )
+        score = sum(haystack.count(term) for term in terms)
+        if score <= 0:
+            continue
+        scored.append((score, str(item.get("updatedAt") or ""), item))
+
+    scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+    return [item for _score, _updated_at, item in scored[: max(1, min(limit, 24))]]
+
+
+def render_paper_memory_context(
+    record: Any,
+    memory_root: Path,
+    query: str,
+    *,
+    limit: int = 8,
+) -> str:
+    items = select_relevant_memory_items(record, memory_root, query, limit=limit)
+    if not items:
+        return ""
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+        tag_text = f" tags: {', '.join(str(tag) for tag in tags)}" if tags else ""
+        confidence = item.get("confidence")
+        confidence_text = f" confidence: {confidence:.2f}" if isinstance(confidence, float) else ""
+        quote = optional_string(item.get("quote"))
+        quote_text = f" evidence: {quote}" if quote else ""
+        lines.append(
+            f"{index}. [paper {str(item.get('type') or 'note')}] "
+            f"{str(item.get('text') or '').strip()}{tag_text}{confidence_text}{quote_text}"
+        )
+    return "\n".join(lines)
+
+
 def has_material_memory_change(left: dict[str, object], right: dict[str, object]) -> bool:
     tracked_keys = (
         "type",
@@ -625,6 +693,38 @@ def has_material_memory_change(left: dict[str, object], right: dict[str, object]
         "locator",
     )
     return any(left.get(key) != right.get(key) for key in tracked_keys)
+
+
+def parse_memory_terms(query: str) -> list[str]:
+    return [
+        term
+        for term in re.split(r"\s+", normalize_for_memory_search(query))
+        if len(term) >= 2
+    ][:16]
+
+
+def normalize_for_memory_search(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold()).strip()
+
+
+def memory_evidence_to_text(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        for key in ("kind", "quote", "contextBefore", "contextAfter", "blockId"):
+            text = optional_string(item.get(key))
+            if text:
+                parts.append(text)
+    return " ".join(parts)
+
+
+def memory_source_to_text(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return " ".join(str(item) for item in value.values() if isinstance(item, str))
 
 
 def write_json_file(path: Path, payload: object) -> None:

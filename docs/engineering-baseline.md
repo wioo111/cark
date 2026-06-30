@@ -13,11 +13,14 @@ verification gates.
 - Production build: `npm run build` from `gui/`
 - Python syntax check: `python -m compileall -q cli.py scripts`
 
-Latest local audit result: 44 frontend tests and 65 Python tests passed, lint
-and the production build passed, Python compilation passed, and the real
-SQLite database reported `integrity_check=ok`. The 48-paper runtime generated
-144 persistent FTS5 entries; English and Chinese control queries both returned
-locatable results.
+Latest local audit result on 2026-06-30: 19 frontend test files / 65 frontend
+tests passed, 129 Python tests passed, lint and the production build passed,
+Python compilation passed, `cark doctor` completed in the default demo profile,
+`scripts/smoke_demo.ps1` completed the no-key demo research-memory flow, and
+`git diff --check` reported no whitespace errors. This machine still reports
+missing local parser dependencies (`onnxruntime` and `torch`) under
+`cark doctor --profile local`, so local MinerU parsing remains an environment
+setup item here.
 
 ## Runtime Data
 
@@ -45,8 +48,9 @@ existing files.
 - `scripts/gui_search.py`: search entry construction, persistent-index lookup,
   fallback scanning, ranking, snippets, and body-match locators.
 - `scripts/gui_locator.py`: canonical server-side stable locator construction.
-- `scripts/gui_memory.py`: paper memory storage, safe-id migration, atomic JSON
-  writes, backups, schema versioning, and memory-item normalization.
+- `scripts/gui_memory.py`: paper memory storage, active-only Copilot context
+  retrieval, safe-id migration, atomic JSON writes, backups, schema versioning,
+  and memory-item normalization.
 - `scripts/gui_memory_engine.py`: shared memory provenance, confidence,
   activation, evidence, conflict, and revision-history normalization.
 - `scripts/gui_agent_memory.py`: global agent memory storage and retrieval.

@@ -133,6 +133,8 @@ export default function ReaderPage() {
     savingEdit,
     memorySavingAnnotationIds,
     memorySavedAnnotationIds,
+    memorySavingAgentCommentIds,
+    memorySavedAgentCommentIds,
     memoryNotice,
     handleDraftStart,
     handleDraftSubmit,
@@ -145,6 +147,7 @@ export default function ReaderPage() {
     handleArchiveToggle,
     handleDeleteAnnotation,
     handleCreateMemoryFromAnnotation,
+    handleCreateMemoryFromAgentComment,
     handleSelectionAgentAction,
     handleCancelCopilotRun,
     handleRetryCopilotRun,
@@ -328,6 +331,8 @@ export default function ReaderPage() {
             copilotRuns={copilotRuns}
             memorySavingAnnotationIds={memorySavingAnnotationIds}
             memorySavedAnnotationIds={memorySavedAnnotationIds}
+            memorySavingAgentCommentIds={memorySavingAgentCommentIds}
+            memorySavedAgentCommentIds={memorySavedAgentCommentIds}
             draft={draft}
             savingDraft={savingDraft}
             replyDraft={replyDraft}
@@ -353,6 +358,9 @@ export default function ReaderPage() {
             onArchiveToggle={(annotationId, nextArchived) => void handleArchiveToggle(annotationId, nextArchived)}
             onDeleteAnnotation={(annotationId) => void handleDeleteAnnotation(annotationId)}
             onCreateMemoryFromAnnotation={(annotation) => void handleCreateMemoryFromAnnotation(annotation)}
+            onCreateMemoryFromAgentComment={(annotation, comment) =>
+              void handleCreateMemoryFromAgentComment(annotation, comment)
+            }
           />
         </section>
       </div>
