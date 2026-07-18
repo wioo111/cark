@@ -4,6 +4,7 @@ import { saveReadingState } from '@/api'
 import type { AnnotationComposerDraft } from '@/components/CommentLane'
 import type { PaperDetail, PaperView } from '@/types'
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
+import { saveOfflineReadingState } from '@/utils/offlineReadingState'
 
 interface UseReaderReadingProgressArgs {
   detail: PaperDetail | null
@@ -63,20 +64,22 @@ export function useReaderReadingProgress({
         readingRevisionRef.current + 1,
         Date.now() * 1000,
       )
+      const readingState = {
+        view: snapshot.view,
+        scrollY: window.scrollY,
+        clientRevision: readingRevisionRef.current,
+        activeSectionId: snapshot.activeSectionId,
+        draft: snapshot.draft,
+      }
+      saveOfflineReadingState(detail.id, readingState)
       try {
         await saveReadingState(
           detail.id,
-          {
-            view: snapshot.view,
-            scrollY: window.scrollY,
-            clientRevision: readingRevisionRef.current,
-            activeSectionId: snapshot.activeSectionId,
-            draft: snapshot.draft,
-          },
+          readingState,
           { keepalive },
         )
       } catch (saveError) {
-        if (!keepalive) {
+        if (!keepalive && navigator.onLine) {
           setReadingStateError(
             saveError instanceof Error
               ? `阅读进度保存失败：${saveError.message}`

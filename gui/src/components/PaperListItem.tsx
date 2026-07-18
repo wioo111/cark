@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 
 import type { PaperReadingStatus, PaperSummary } from '@/types'
 import { formatUpdatedAt } from '@/utils/paper'
+import { isPaperOffline } from '@/utils/offlineLibrary'
 
 interface PaperListItemProps {
   paper: PaperSummary
@@ -29,12 +30,14 @@ export function PaperListItem({
 }: PaperListItemProps) {
   const readingStatus = paper.readingStatus ?? 'unread'
   const tags = paper.tags ?? []
+  const offline = isPaperOffline(paper.id)
 
   return (
     <article className="cark-card group flex min-w-0 w-full overflow-hidden rounded-[28px] px-5 py-5 transition duration-200 hover:border-[rgba(var(--accent-rgb),0.35)] hover:bg-[var(--surface-soft)]">
       <div className="flex min-w-0 w-full items-start justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
+            {offline ? <span className="cark-chip-accent rounded-full px-2.5 py-1 text-[11px]">已离线</span> : null}
             {recent ? (
               <span className="cark-chip-accent rounded-full px-2 py-1 text-[11px] uppercase tracking-[0.2em]">
                 最近阅读

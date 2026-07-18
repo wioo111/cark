@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { postOpenAction } from '@/api'
 import { CommentLane } from '@/components/CommentLane'
 import { MarkdownArticle } from '@/components/MarkdownArticle'
+import { MobileReaderDock } from '@/components/MobileReaderDock'
 import type { MemoryNoteSeed } from '@/components/PaperMemoryPanel'
 import { SelectionToolbar } from '@/components/SelectionToolbar'
 import { useReaderAnnotationActions } from '@/hooks/useReaderAnnotationActions'
@@ -27,6 +28,7 @@ import type {
   PaperAnnotation,
 } from '@/types'
 import { cleanBilingualMarkdown, extractBilingualOutline, extractOutline, resolvePaperView } from '@/utils/paper'
+import { downloadPaperForOffline, isPaperOffline } from '@/utils/offlineLibrary'
 import {
   buildLocatorSearchParams,
   buildPaperMemoryItemLocator,
@@ -64,6 +66,8 @@ export default function ReaderPage() {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [memorySeed, setMemorySeed] = useState<MemoryNoteSeed | null>(null)
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0)
+  const [offlineStatus, setOfflineStatus] = useState<'idle' | 'downloading' | 'ready' | 'error'>('idle')
+  const [offlineNotice, setOfflineNotice] = useState<string | null>(null)
   const articleShellRef = useRef<HTMLDivElement | null>(null)
   const articleRef = useRef<HTMLDivElement | null>(null)
 
@@ -179,6 +183,24 @@ export default function ReaderPage() {
   }, [activeView, detail?.markdown.linearized, markdown])
 
   useEffect(() => {
+    setOfflineStatus(detail && isPaperOffline(detail.id) ? 'ready' : 'idle')
+  }, [detail])
+
+  async function handleOfflineDownload() {
+    if (!detail || offlineStatus === 'downloading') return
+    setOfflineStatus('downloading')
+    setOfflineNotice(null)
+    try {
+      const result = await downloadPaperForOffline(detail)
+      setOfflineStatus('ready')
+      setOfflineNotice(`已保存到本机，离线可读（${result.downloaded}/${result.total} 项）`)
+    } catch (downloadError) {
+      setOfflineStatus('error')
+      setOfflineNotice(downloadError instanceof Error ? `离线下载失败：${downloadError.message}` : '离线下载失败')
+    }
+  }
+
+  useEffect(() => {
     setDraft(restoredDraft)
   }, [restoredDraft, setDraft])
 
@@ -264,10 +286,18 @@ export default function ReaderPage() {
   return (
     <main className="cark-page min-h-screen">
       <ReaderFloatingActions onOpenOutline={() => setOutlineOpen(true)} />
+      <MobileReaderDock
+        activeView={activeView}
+        availableViews={detail.availableViews}
+        offlineStatus={offlineStatus}
+        onOpenOutline={() => setOutlineOpen(true)}
+        onSetView={setView}
+        onDownload={() => void handleOfflineDownload()}
+      />
       <ReaderStatusToasts
         annotationError={annotationError}
         readingStateError={readingStateError}
-        memoryNotice={memoryNotice}
+        memoryNotice={offlineNotice ?? memoryNotice}
         onClearErrors={() => {
           setAnnotationError(null)
           setReadingStateError(null)
@@ -281,7 +311,7 @@ export default function ReaderPage() {
         onJump={jumpToHeading}
       />
 
-      <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col px-6 py-6 lg:px-8">
+      <div className="cark-reader-layout mx-auto flex min-h-screen max-w-[1680px] flex-col px-6 py-6 lg:px-8">
         <ReaderHeader
           detail={detail}
           activeView={activeView}
@@ -290,9 +320,9 @@ export default function ReaderPage() {
           onSetView={setView}
         />
 
-        <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="cark-reader-content mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div ref={articleShellRef} className="cark-panel relative overflow-hidden rounded-[28px]">
-            <div className="border-b px-6 py-4 [border-color:var(--border-soft)]">
+            <div className="cark-reader-view-heading border-b px-6 py-4 [border-color:var(--border-soft)]">
               <p className="cark-faint text-xs uppercase tracking-[0.22em]">正文视图</p>
               <h2 className="cark-title mt-1 font-serif text-xl">
                 {activeView === 'bilingual' ? '译文版本' : '原文'}
@@ -311,11 +341,11 @@ export default function ReaderPage() {
             />
             <div
               ref={articleRef}
-              className="relative px-5 py-6 lg:px-8"
+              className="cark-reader-article-shell relative px-5 py-6 lg:px-8"
               onMouseUp={handleSelectionCapture}
               onKeyUp={handleSelectionCapture}
             >
-              <div className="cark-paper rounded-[30px] px-6 py-8 lg:px-10 lg:py-10">
+              <div className="cark-reader-paper cark-paper rounded-[30px] px-6 py-8 lg:px-10 lg:py-10">
                 <MarkdownArticle markdown={markdown} paperId={detail.id} />
               </div>
             </div>

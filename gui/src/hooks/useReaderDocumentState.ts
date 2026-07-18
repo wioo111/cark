@@ -9,6 +9,7 @@ import {
 import type { AnnotationComposerDraft } from '@/components/CommentLane'
 import type { AppSettings, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { normalizeDraftComposerState } from '@/utils/readerAnnotationHelpers'
+import { preferNewestReadingState, readOfflineReadingState } from '@/utils/offlineReadingState'
 
 function createFallbackSettings(): AppSettings {
   return {
@@ -101,8 +102,12 @@ export function useReaderDocumentState({
           )
         }
 
-        if (readingStateResult.status === 'fulfilled') {
-          const readingState = readingStateResult.value
+        const localReadingState = readOfflineReadingState(paperId)
+        const readingState = preferNewestReadingState(
+          readingStateResult.status === 'fulfilled' ? readingStateResult.value : null,
+          localReadingState,
+        )
+        if (readingState) {
           setRestoredView(
             detailPayload.availableViews.includes(readingState.view)
               ? readingState.view
@@ -111,9 +116,12 @@ export function useReaderDocumentState({
           setRestoredScrollY(readingState.scrollY)
           setRestoredDraft(normalizeDraftComposerState(readingState.draft ?? null))
         } else {
+          const readingStateError = readingStateResult.status === 'rejected'
+            ? readingStateResult.reason
+            : null
           setReadingStateError(
-            readingStateResult.reason instanceof Error
-              ? `阅读进度加载失败：${readingStateResult.reason.message}`
+            readingStateError instanceof Error
+              ? `阅读进度加载失败：${readingStateError.message}`
               : '阅读进度加载失败',
           )
         }

@@ -46,7 +46,7 @@ export function ReaderFloatingActions({
     <>
       <Link
         to="/"
-        className="cark-panel cark-elevated fixed bottom-5 left-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 text-sm backdrop-blur transition hover:border-[rgba(var(--accent-rgb),0.28)] xl:left-8"
+        className="cark-panel cark-elevated fixed bottom-5 left-5 z-40 hidden items-center gap-2 rounded-full px-4 py-3 text-sm backdrop-blur transition hover:border-[rgba(var(--accent-rgb),0.28)] xl:inline-flex xl:left-8"
       >
         <ArrowLeft className="h-4 w-4" />
         返回文献库
@@ -55,7 +55,7 @@ export function ReaderFloatingActions({
       <button
         type="button"
         onClick={onOpenOutline}
-        className="cark-panel cark-elevated fixed left-0 top-1/2 z-40 inline-flex h-14 w-12 -translate-y-1/2 items-center justify-center rounded-r-[18px] border-l-0 backdrop-blur transition hover:w-14 hover:border-[rgba(var(--accent-rgb),0.28)] xl:h-16 xl:w-14"
+        className="cark-panel cark-elevated fixed left-0 top-1/2 z-40 hidden h-14 w-12 -translate-y-1/2 items-center justify-center rounded-r-[18px] border-l-0 backdrop-blur transition hover:w-14 hover:border-[rgba(var(--accent-rgb),0.28)] xl:inline-flex xl:h-16 xl:w-14"
         aria-label="打开目录"
       >
         <PanelLeft className="h-4 w-4" />
@@ -64,7 +64,7 @@ export function ReaderFloatingActions({
       <div
         role="region"
         aria-label="阅读外观"
-        className="fixed bottom-20 right-4 z-40 max-w-[calc(100vw-2rem)] sm:bottom-5 xl:right-8"
+        className="fixed bottom-20 right-4 z-40 hidden max-w-[calc(100vw-2rem)] xl:block xl:right-8"
       >
         <ThemeSwitch />
       </div>
