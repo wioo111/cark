@@ -25,7 +25,7 @@ class GuiSearchTests(unittest.TestCase):
             root = Path(temp_dir)
             memory_root = root / "memory"
             record = fake_record(root)
-            memory_item = create_memory_item(
+            create_memory_item(
                 record,
                 memory_root,
                 {
@@ -40,7 +40,7 @@ class GuiSearchTests(unittest.TestCase):
                     },
                 },
             )
-            candidate_item = create_memory_item(
+            create_memory_item(
                 record,
                 memory_root,
                 {

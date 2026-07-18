@@ -27,5 +27,5 @@ Write-Host ""
 Write-Host "Download finished"
 Write-Host "Config file:"
 Write-Host $paths.ConfigFile
-Write-Host "Run script:"
-Write-Host (Join-Path $paths.WorkbenchRoot "scripts\run-mineru-pipeline.ps1")
+Write-Host "Next step:"
+Write-Host "  cark upload <paper.pdf> --backend local --prepare-only"

@@ -5,7 +5,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
 
 import gui_annotations
 import gui_exports

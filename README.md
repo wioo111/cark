@@ -140,7 +140,6 @@ config/      可提交的配置模板
 docs/        安装、使用、工程基线与交付说明
 gui/         React 阅读工作台
 scripts/     解析、翻译、导出与本地服务
-patches/     独立的兼容性补丁
 runtime/     本地论文和运行产物，不进入 Git
 ```
 
@@ -162,8 +161,7 @@ npm run build
 
 cd ..
 python -m compileall -q cli.py scripts
-
-powershell -ExecutionPolicy Bypass -File .\scripts\smoke_demo.ps1
+cark demo
 ```
 
 ## 当前阶段
@@ -186,9 +184,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke_demo.ps1
 - 设置页可测试、复制、禁用并保留 Agent 配置；不完整的启用 Agent 不会进入共读入口
 - 无 API key 的 demo smoke，可验证研究记忆闭环
 - MinerU 本地 / 云端双后端接入
-- 翻译与扩展导出链路已接通
+- 翻译采用结构化分块、格式校验和失败关闭，只有完整通过才发布双语稿
 
 接下来会继续推进：
 
-- GUI 可视化演示数据安装和录屏流程
 - 全局提问入口与跨论文证据编排

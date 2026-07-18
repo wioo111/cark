@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-
 def optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
