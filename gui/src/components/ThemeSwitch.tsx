@@ -24,6 +24,7 @@ export function ThemeSwitch() {
               key={item.value}
               type="button"
               aria-label={`切换到${item.label}背景`}
+              aria-pressed={active}
               title={item.label}
               onClick={() => setBackground(item.value)}
               className={[

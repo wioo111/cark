@@ -60,6 +60,14 @@ export function ReaderFloatingActions({
       >
         <PanelLeft className="h-4 w-4" />
       </button>
+
+      <div
+        role="region"
+        aria-label="阅读外观"
+        className="fixed bottom-20 right-4 z-40 max-w-[calc(100vw-2rem)] sm:bottom-5 xl:right-8"
+      >
+        <ThemeSwitch />
+      </div>
     </>
   )
 }
@@ -179,7 +187,6 @@ export function ReaderHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <ThemeSwitch />
           <button
             type="button"
             onClick={onOpenRootDir}
