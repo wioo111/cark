@@ -3,7 +3,7 @@ import {
   postPaperAnnotation,
 } from '@/api'
 import type { AnnotationComposerDraft } from '@/components/CommentLane'
-import type { CreatePaperAnnotationInput, MemoryItemType, PaperAnnotation } from '@/types'
+import type { AnnotationComment, CreatePaperAnnotationInput, MemoryItemType, PaperAnnotation } from '@/types'
 
 import { normalizeAnnotationText } from '@/utils/annotationLocator'
 
@@ -77,6 +77,11 @@ export function buildMemoryTextFromAnnotation(annotation: PaperAnnotation) {
     return commentText
   }
   return annotation.quote.trim()
+}
+
+export function buildMemoryTextFromAgentComment(comment: Pick<AnnotationComment, 'content' | 'preview'>) {
+  const text = comment.content.trim() || comment.preview?.trim() || ''
+  return text.replace(/\s+/g, ' ').trim()
 }
 
 export function inferMemoryItemType(text: string): MemoryItemType {

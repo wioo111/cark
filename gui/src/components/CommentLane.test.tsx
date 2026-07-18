@@ -53,6 +53,8 @@ describe('CommentLane', () => {
         copilotRuns={[]}
         memorySavingAnnotationIds={[]}
         memorySavedAnnotationIds={[]}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
         draft={null}
         savingDraft={false}
         replyDraft={null}
@@ -78,6 +80,7 @@ describe('CommentLane', () => {
         onArchiveToggle={vi.fn()}
         onDeleteAnnotation={vi.fn()}
         onCreateMemoryFromAnnotation={onCreateMemoryFromAnnotation}
+        onCreateMemoryFromAgentComment={vi.fn()}
       />,
     )
 
@@ -150,6 +153,8 @@ describe('CommentLane', () => {
         ]}
         memorySavingAnnotationIds={[]}
         memorySavedAnnotationIds={[]}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
         draft={null}
         savingDraft={false}
         replyDraft={null}
@@ -175,10 +180,77 @@ describe('CommentLane', () => {
         onArchiveToggle={vi.fn()}
         onDeleteAnnotation={vi.fn()}
         onCreateMemoryFromAnnotation={vi.fn()}
+        onCreateMemoryFromAgentComment={vi.fn()}
       />,
     )
 
     expect(screen.getByText('已生成候选记忆 2')).toBeInTheDocument()
+  })
+
+  it('creates a memory candidate from an agent reply without selecting the card', () => {
+    const onCreateMemoryFromAgentComment = vi.fn()
+    const onSelectAnnotation = vi.fn()
+    const agentComment = {
+      id: 'comment-agent',
+      authorType: 'agent' as const,
+      authorLabel: 'Method Agent',
+      agentId: 'agent-a',
+      content: 'This is a reusable agent insight.',
+      preview: 'This is a reusable agent insight.',
+      createdAt: '2026-06-17T00:00:00',
+      updatedAt: '2026-06-17T00:00:00',
+      status: 'ready' as const,
+    }
+    const agentAnnotation: PaperAnnotation = {
+      ...annotation,
+      comments: [...annotation.comments, agentComment],
+    }
+
+    render(
+      <CommentLane
+        annotations={[agentAnnotation]}
+        activeView="linearized"
+        laneHeight={420}
+        agents={[{ id: 'agent-a', name: 'Method Agent', rolePrompt: '', apiKey: '', baseUrl: '', model: '', enabled: true }]}
+        activeAgentAnnotationIds={[]}
+        copilotRuns={[]}
+        memorySavingAnnotationIds={[]}
+        memorySavedAnnotationIds={[]}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
+        draft={null}
+        savingDraft={false}
+        replyDraft={null}
+        savingReply={false}
+        editDraft={null}
+        savingEdit={false}
+        onDraftChange={vi.fn()}
+        onDraftCancel={vi.fn()}
+        onDraftSubmit={vi.fn()}
+        onDraftAgentToggle={vi.fn()}
+        onSelectAnnotation={onSelectAnnotation}
+        onReplyStart={vi.fn()}
+        onReplyChange={vi.fn()}
+        onReplyCancel={vi.fn()}
+        onReplySubmit={vi.fn()}
+        onReplyAgentToggle={vi.fn()}
+        onCancelCopilotRun={vi.fn()}
+        onRetryCopilotRun={vi.fn()}
+        onEditStart={vi.fn()}
+        onEditChange={vi.fn()}
+        onEditCancel={vi.fn()}
+        onEditSubmit={vi.fn()}
+        onArchiveToggle={vi.fn()}
+        onDeleteAnnotation={vi.fn()}
+        onCreateMemoryFromAnnotation={vi.fn()}
+        onCreateMemoryFromAgentComment={onCreateMemoryFromAgentComment}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save agent reply as memory candidate' }))
+
+    expect(onCreateMemoryFromAgentComment).toHaveBeenCalledWith(agentAnnotation, agentComment)
+    expect(onSelectAnnotation).not.toHaveBeenCalled()
   })
 
   it('shows memory save feedback states', () => {
@@ -192,6 +264,8 @@ describe('CommentLane', () => {
         copilotRuns={[]}
         memorySavingAnnotationIds={['annotation-1']}
         memorySavedAnnotationIds={[]}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
         draft={null}
         savingDraft={false}
         replyDraft={null}
@@ -217,6 +291,7 @@ describe('CommentLane', () => {
         onArchiveToggle={vi.fn()}
         onDeleteAnnotation={vi.fn()}
         onCreateMemoryFromAnnotation={vi.fn()}
+        onCreateMemoryFromAgentComment={vi.fn()}
       />,
     )
 
@@ -233,6 +308,8 @@ describe('CommentLane', () => {
         copilotRuns={[]}
         memorySavingAnnotationIds={[]}
         memorySavedAnnotationIds={['annotation-1']}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
         draft={null}
         savingDraft={false}
         replyDraft={null}
@@ -258,6 +335,7 @@ describe('CommentLane', () => {
         onArchiveToggle={vi.fn()}
         onDeleteAnnotation={vi.fn()}
         onCreateMemoryFromAnnotation={vi.fn()}
+        onCreateMemoryFromAgentComment={vi.fn()}
       />,
     )
 
@@ -320,6 +398,8 @@ describe('CommentLane', () => {
         ]}
         memorySavingAnnotationIds={[]}
         memorySavedAnnotationIds={[]}
+        memorySavingAgentCommentIds={[]}
+        memorySavedAgentCommentIds={[]}
         draft={null}
         savingDraft={false}
         replyDraft={null}
@@ -345,6 +425,7 @@ describe('CommentLane', () => {
         onArchiveToggle={vi.fn()}
         onDeleteAnnotation={vi.fn()}
         onCreateMemoryFromAnnotation={vi.fn()}
+        onCreateMemoryFromAgentComment={vi.fn()}
       />,
     )
 

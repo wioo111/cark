@@ -119,6 +119,8 @@ python .\cli.py demo --gui
 cark demo --gui
 ```
 
+Windows 安装、doctor、demo、GUI、Agent 设置和常见排障见 [docs/windows-usage.md](docs/windows-usage.md)。
+
 ## 技术取向
 
 这个项目有几个明确立场：
@@ -135,6 +137,7 @@ cark demo --gui
 ```text
 cli.py       命令行入口与任务编排
 config/      可提交的配置模板
+docs/        安装、使用、工程基线与交付说明
 gui/         React 阅读工作台
 scripts/     解析、翻译、导出与本地服务
 patches/     独立的兼容性补丁

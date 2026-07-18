@@ -532,7 +532,6 @@ export interface AppSettings {
     apiKey: string
     baseUrl: string
     model: string
-    failRatioLimit: number
   }
   publish: {
     prepareOnly: boolean

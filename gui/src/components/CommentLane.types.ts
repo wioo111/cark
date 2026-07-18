@@ -45,6 +45,8 @@ export interface CommentLaneProps {
   copilotRuns: CopilotRun[]
   memorySavingAnnotationIds: string[]
   memorySavedAnnotationIds: string[]
+  memorySavingAgentCommentIds: string[]
+  memorySavedAgentCommentIds: string[]
   draft: AnnotationComposerDraft | null
   savingDraft: boolean
   replyDraft: AnnotationReplyDraft | null
@@ -70,4 +72,5 @@ export interface CommentLaneProps {
   onArchiveToggle: (annotationId: string, nextArchived: boolean) => void
   onDeleteAnnotation: (annotationId: string) => void
   onCreateMemoryFromAnnotation: (annotation: PaperAnnotation) => void
+  onCreateMemoryFromAgentComment: (annotation: PaperAnnotation, comment: AnnotationComment) => void
 }

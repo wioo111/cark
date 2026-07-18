@@ -116,7 +116,6 @@ function baseSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       apiKey: '',
       baseUrl: 'https://api.deepseek.com/v1',
       model: 'deepseek-chat',
-      failRatioLimit: 0.2,
     },
     publish: {
       prepareOnly: true,

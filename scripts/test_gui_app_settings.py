@@ -1,6 +1,14 @@
+import copy
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 import gui_app_settings
+import gui_app_utils
 
 
 def default_agent():
@@ -30,7 +38,6 @@ def default_settings():
             "apiKey": "",
             "baseUrl": "https://api.deepseek.com/v1",
             "model": "deepseek-chat",
-            "failRatioLimit": 0.2,
         },
         "publish": {
             "prepareOnly": True,
@@ -62,6 +69,79 @@ class FakeResponse:
 
 
 class GuiAppSettingsTests(unittest.TestCase):
+    def test_upload_readiness_passes_settings_by_keyword(self):
+        received = {}
+
+        def detect_capabilities(*, settings=None):
+            received["settings"] = settings
+            return {"ready": True, "issues": []}
+
+        settings = {"mineru": {"backend": "local"}}
+        gui_app_settings.ensure_upload_ready(
+            detect_capabilities_func=detect_capabilities,
+            settings=settings,
+        )
+
+        self.assertIs(received["settings"], settings)
+
+    def test_materialize_does_not_rewrite_unchanged_versioned_settings(self):
+        with TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "gui_settings.json"
+            settings_path.write_text("{}", encoding="utf-8")
+            expected = sanitize(default_settings())
+            existing = copy.deepcopy(expected)
+            existing["schemaVersion"] = 1
+            write_json_file = Mock()
+
+            result = gui_app_settings.materialize_gui_settings(
+                settings_path=settings_path,
+                default_settings_factory=default_settings,
+                sanitize_settings=sanitize,
+                load_json_object=lambda _path: copy.deepcopy(existing),
+                write_json_file=write_json_file,
+            )
+
+            self.assertEqual(result, expected)
+            write_json_file.assert_not_called()
+
+    def test_materialize_serializes_concurrent_first_run_writes(self):
+        with TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "gui_settings.json"
+            state_lock = threading.Lock()
+            active_writes = 0
+            max_active_writes = 0
+            write_count = 0
+
+            def tracked_write(path, payload):
+                nonlocal active_writes, max_active_writes, write_count
+                with state_lock:
+                    active_writes += 1
+                    write_count += 1
+                    max_active_writes = max(max_active_writes, active_writes)
+                time.sleep(0.05)
+                try:
+                    gui_app_utils.write_json_file(path, payload)
+                finally:
+                    with state_lock:
+                        active_writes -= 1
+
+            def materialize():
+                return gui_app_settings.materialize_gui_settings(
+                    settings_path=settings_path,
+                    default_settings_factory=default_settings,
+                    sanitize_settings=sanitize,
+                    load_json_object=gui_app_utils.load_json_object,
+                    write_json_file=tracked_write,
+                )
+
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                results = list(executor.map(lambda _index: materialize(), range(8)))
+
+            expected = sanitize(default_settings())
+            self.assertTrue(all(result == expected for result in results))
+            self.assertEqual(write_count, 1)
+            self.assertEqual(max_active_writes, 1)
+
     def test_incomplete_enabled_agent_is_retained_but_disabled(self):
         settings = sanitize(
             {

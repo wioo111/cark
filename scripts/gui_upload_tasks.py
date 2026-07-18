@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,23 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+
+TASK_ID_RE = re.compile(r"^task-\d{14}-[0-9a-f]{6}$", re.IGNORECASE)
+LEGACY_STAGED_NAME_RE = re.compile(
+    r"^(?P<task_id>task-\d{14}-[0-9a-f]{6})-(?P<file_name>.+)$",
+    re.IGNORECASE,
+)
+
+
+def describe_staged_file(file_path: Path) -> tuple[str | None, str]:
+    """Return the stable task id and original display stem for new and legacy uploads."""
+    if TASK_ID_RE.fullmatch(file_path.parent.name):
+        return file_path.parent.name, file_path.stem
+    legacy_match = LEGACY_STAGED_NAME_RE.match(file_path.name)
+    if legacy_match:
+        return legacy_match.group("task_id"), Path(legacy_match.group("file_name")).stem
+    return None, file_path.stem
 
 
 def snapshot_task(store: Any, task_id: str) -> dict[str, object] | None:
@@ -97,6 +115,7 @@ def build_task_command(
     workbench_root: Path,
     build_direct_network_env: Callable[[], dict[str, str]],
     sanitize_ascii_stem: Callable[[str], str],
+    runtime_output_dir: Path | None = None,
     python_executable: str = sys.executable,
 ) -> tuple[list[str], dict[str, str], Path]:
     mineru_settings = settings["mineru"]
@@ -133,6 +152,15 @@ def build_task_command(
         "--image-mode",
         str(publish_settings.get("imageMode") or "note"),
     ]
+    task_id, display_title = describe_staged_file(file_path)
+    command.extend(["--title", display_title])
+    if task_id:
+        output_root = runtime_output_dir or (workbench_root / "runtime" / "output")
+        artifact_root = output_root / task_id / "paper"
+        auto_dir = artifact_root / "auto"
+        command.extend(["--mineru-output-dir", str(artifact_root)])
+        command.extend(["--linearized-output", str(auto_dir / "paper_linearized.md")])
+        command.extend(["--prepared-output", str(auto_dir / "paper_feishu_docx_ready.md")])
     if backend == "cloud":
         command.extend(["--model-version", str(mineru_settings.get("modelVersion") or "pipeline")])
         command.extend(["--api-token", str(mineru_settings.get("apiToken") or "")])
@@ -151,10 +179,8 @@ def build_task_command(
     env["OPENAI_API_KEY"] = str(translation_settings.get("apiKey") or "")
     env["OPENAI_BASE_URL"] = str(translation_settings.get("baseUrl") or "https://api.deepseek.com/v1")
     env["OPENAI_MODEL"] = str(translation_settings.get("model") or "deepseek-chat")
-    fail_ratio_limit = translation_settings.get("failRatioLimit")
-    env["TRANSLATE_FAIL_RATIO_LIMIT"] = str(0.2 if fail_ratio_limit is None else fail_ratio_limit)
 
-    safe_stem = sanitize_ascii_stem(file_path.stem)
+    safe_stem = sanitize_ascii_stem(task_id or display_title)
     mineru_log = workbench_root / "runtime" / "logs" / f"mineru_{safe_stem}.log"
     return command, env, mineru_log
 
@@ -314,7 +340,7 @@ def create_upload_task(
         raise ValueError("上传内容为空")
     safe_name = sanitize_filename(file_name)
     task_id = f"task-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    staged_path = uploads_dir / f"{task_id}-{safe_name}"
+    staged_path = uploads_dir / task_id / safe_name
     staged_path.parent.mkdir(parents=True, exist_ok=True)
     staged_path.write_bytes(content)
     task = {
@@ -353,7 +379,7 @@ def create_upload_task_from_path(
     if not safe_name.lower().endswith(".pdf"):
         safe_name = f"{safe_name}.pdf"
     task_id = f"task-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
-    staged_path = uploads_dir / f"{task_id}-{safe_name}"
+    staged_path = uploads_dir / task_id / safe_name
     staged_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(file_path, staged_path)
     task = {

@@ -64,6 +64,63 @@ def make_context_cache() -> dict[str, object]:
 
 
 class GuiCopilotStructuredOutputTest(unittest.TestCase):
+    def test_build_agent_messages_includes_confirmed_paper_memory_only(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            record = FakeRecord()
+            memory_root = Path(temp_dir)
+            annotation = make_annotation()
+            agent = {
+                "id": "agent-a",
+                "name": "Agent A",
+                "rolePrompt": "Focus on methods.",
+            }
+
+            gui_memory.create_memory_item(
+                record,
+                memory_root,
+                {
+                    "type": "insight",
+                    "text": "Confirmed retrieval memory marker.",
+                    "activationStatus": "active",
+                    "quote": "The method relies on retrieval.",
+                },
+            )
+            gui_memory.create_memory_item(
+                record,
+                memory_root,
+                {
+                    "type": "insight",
+                    "text": "Candidate retrieval leak marker.",
+                    "activationStatus": "candidate",
+                    "quote": "The method relies on retrieval.",
+                },
+            )
+            gui_memory.create_memory_item(
+                record,
+                memory_root,
+                {
+                    "type": "insight",
+                    "text": "Archived retrieval leak marker.",
+                    "activationStatus": "archived",
+                    "status": "archived",
+                    "quote": "The method relies on retrieval.",
+                },
+            )
+
+            messages = gui_copilot.build_agent_messages(
+                record,
+                annotation,
+                agent,
+                memory_root=memory_root,
+                load_copilot_context_cache_func=lambda _record, _view: make_context_cache(),
+                run_mode="explain",
+            )
+
+            content = "\n\n".join(message["content"] for message in messages)
+            self.assertIn("Confirmed retrieval memory marker.", content)
+            self.assertNotIn("Candidate retrieval leak marker.", content)
+            self.assertNotIn("Archived retrieval leak marker.", content)
+
     def test_structured_output_creates_candidate_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             record = FakeRecord()
