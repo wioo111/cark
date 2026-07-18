@@ -31,6 +31,9 @@ runtime/inputs/
 config/*local*.json
 config/gui_settings.json
 config/gui_settings.json.bak
+config/pdf_docx_pipeline.json
+config/docx_pipeline.json
+config/feishu_text_replacements.json
 # MinerU 下载器生成的本地配置（含本机绝对模型路径），用 config/mineru.example.json 作模板
 config/mineru.json
 

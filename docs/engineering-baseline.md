@@ -1,10 +1,9 @@
 # cark Engineering Baseline
 
-Date: 2026-06-19
+Date: 2026-07-19
 
-This document records the current product surface before the long-term roadmap
-changes the data model. It is intentionally concrete: routes, data shapes, and
-verification gates.
+This document records the current product surface and engineering boundaries.
+It is intentionally concrete: routes, data shapes, and verification gates.
 
 ## Current Verification Gates
 
@@ -13,10 +12,10 @@ verification gates.
 - Production build: `npm run build` from `gui/`
 - Python syntax check: `python -m compileall -q cli.py scripts`
 
-Latest local audit result on 2026-06-30: 19 frontend test files / 66 frontend
-tests passed, 129 Python tests passed, lint and the production build passed,
+Latest local audit result on 2026-07-19: 19 frontend test files / 66 frontend
+tests passed, 145 Python tests passed, lint and the production build passed,
 Python compilation passed, `cark doctor` completed in the default demo profile,
-`scripts/smoke_demo.ps1` completed the no-key demo research-memory flow, and
+`cark demo` completed the no-key demo research-memory flow, and
 `git diff --check` reported no whitespace errors. This machine still reports
 missing local parser dependencies (`onnxruntime` and `torch`) under
 `cark doctor --profile local`, so local MinerU parsing remains an environment
@@ -286,10 +285,10 @@ Current shape:
 
 ## Current Risks
 
-- `scripts/gui_server.py`, `ReaderPage.tsx`, and `CommentLane.tsx` remain too
-  large even after the first module extractions.
-- Search is persistent, but index refresh is still primarily a full rebuild;
-  it needs per-paper content versions and incremental replacement.
+- `CommentLane.parts.tsx` remains large and needs further extraction along
+  behavior boundaries.
+- Search updates are incremental per paper, but the index still lacks an
+  explicit schema/content version for deterministic rebuild decisions.
 - Exact body location can fall back from block ids to quote and surrounding
   context; locator recovery still needs more tests against edited documents.
 - Single-paper memory Markdown export exists, but export history, background

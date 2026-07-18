@@ -25,9 +25,7 @@ import argparse
 import ctypes
 import os
 import sys
-import threading
 import time
-from ctypes import wintypes
 from pathlib import Path
 
 GREEN = "[ OK ]"
@@ -249,7 +247,7 @@ def check_orphan_processes() -> None:
 def check_cark_delivery_surface(workbench_root: Path = WORKBENCH_ROOT) -> None:
     docs_path = workbench_root / "docs" / "windows-usage.md"
     demo_py = workbench_root / "scripts" / "smoke_demo.py"
-    demo_ps1 = workbench_root / "scripts" / "smoke_demo.ps1"
+    cli_py = workbench_root / "cli.py"
     gui_index = workbench_root / "gui" / "dist" / "index.html"
     runtime_root = workbench_root / "runtime"
 
@@ -258,10 +256,10 @@ def check_cark_delivery_surface(workbench_root: Path = WORKBENCH_ROOT) -> None:
     else:
         _warn("缺少 Windows 使用文档（docs/windows-usage.md）")
 
-    if demo_py.exists() and demo_ps1.exists():
-        _ok("demo smoke 脚本已就位（cark demo / scripts/smoke_demo.ps1）")
+    if demo_py.exists() and cli_py.exists():
+        _ok("demo smoke 入口已就位（cark demo）")
     else:
-        _warn("demo smoke 脚本不完整，无法保证无 API key 演示链路")
+        _warn("demo smoke 入口不完整，无法保证无 API key 演示链路")
 
     if gui_index.exists():
         _ok("GUI 构建产物已就位（gui/dist/index.html）")

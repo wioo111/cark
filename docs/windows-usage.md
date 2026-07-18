@@ -179,7 +179,7 @@ npm run build
 cd ..
 python -m compileall -q cli.py scripts
 cark doctor
-powershell -ExecutionPolicy Bypass -File .\scripts\smoke_demo.ps1
+cark demo
 git diff --check
 ```
 

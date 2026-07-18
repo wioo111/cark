@@ -141,7 +141,7 @@ def linearize_content_list_file(input_path, output_path):
 def prepare_markdown_file(linearized_output, prepared_output, image_mode):
     prepared_markdown, local_images = prepare_markdown(linearized_output, image_mode)
     
-    # Inject Hermes-style academic template at the top
+    # Add the cark reading template before the paper body.
     title = linearized_output.stem.replace("_linearized", "").replace("_bilingual", "")
     
     template = f"""# 论文导读：{title}

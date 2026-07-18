@@ -1,17 +1,17 @@
 [
   {
     "match": "exact",
-    "from": "抽象的",
-    "to": "摘要"
+    "from": "旧术语",
+    "to": "规范术语"
   },
   {
     "match": "contains",
-    "from": "Both authors contributed equally to this research.",
-    "to": "∗两位作者对本研究贡献相同。"
+    "from": "需要统一的原文片段",
+    "to": "统一后的文本"
   },
   {
-    "match": "exact",
-    "from": "与多个用户和人工智能代理协作文档编辑",
-    "to": "与多个用户和人工智能代理协作文档编辑"
+    "match": "regex",
+    "from": "版本\\s+v[0-9]+",
+    "to": "当前版本"
   }
 ]

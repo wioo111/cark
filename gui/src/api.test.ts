@@ -72,15 +72,15 @@ describe('agent memory api', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await fetchAgentMemory('Hermes memory')
+    await fetchAgentMemory('evidence memory')
     await postAgentMemoryItem({
       type: 'research_interest',
-      text: 'Hermes-style long-term memory',
+      text: 'Evidence-first long-term memory',
       tags: ['agent'],
     })
     await patchAgentMemoryItem('agent-memory-1', { status: 'archived' })
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/agent-memory?q=Hermes+memory', undefined)
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/agent-memory?q=evidence+memory', undefined)
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       '/api/agent-memory',
@@ -88,7 +88,7 @@ describe('agent memory api', () => {
         method: 'POST',
         body: JSON.stringify({
           type: 'research_interest',
-          text: 'Hermes-style long-term memory',
+          text: 'Evidence-first long-term memory',
           tags: ['agent'],
         }),
       }),

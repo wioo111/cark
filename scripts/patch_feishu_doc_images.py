@@ -54,11 +54,6 @@ def parse_args():
     parser.add_argument("--app-id", default=os.getenv("FEISHU_APP_ID", ""), help="Feishu app id")
     parser.add_argument("--app-secret", default=os.getenv("FEISHU_APP_SECRET", ""), help="Feishu app secret")
     parser.add_argument(
-        "--normalize-frontmatter",
-        action="store_true",
-        help="Deprecated: apply hard-coded fixes for the current test paper only.",
-    )
-    parser.add_argument(
         "--replacements-file",
         help="Optional JSON file describing text replacements to apply after import.",
     )
@@ -296,14 +291,6 @@ def load_replacements(path):
     return replacements
 
 
-def legacy_frontmatter_replacements():
-    return [
-        {"match": "exact", "from": "与多个用户和人工智能代理协作文档编辑", "to": "与多个用户和人工智能代理协作文档编辑"},
-        {"match": "exact", "from": "抽象的", "to": "摘要"},
-        {"match": "contains", "from": "Both authors contributed equally to this research.", "to": "∗两位作者对本研究贡献相同。"},
-    ]
-
-
 def replacement_matches(rule, text):
     source = rule["from"]
     match_type = rule["match"]
@@ -459,8 +446,6 @@ def main():
     access_token = get_tenant_access_token(args.app_id, args.app_secret)
     image_results = patch_images(access_token, args.document_token, markdown_path)
     replacement_rules = load_replacements(args.replacements_file)
-    if args.normalize_frontmatter:
-        replacement_rules.extend(legacy_frontmatter_replacements())
     text_replacements_applied = []
     if replacement_rules:
         text_replacements_applied = apply_text_replacements(

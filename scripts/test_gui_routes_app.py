@@ -2,7 +2,6 @@ import tempfile
 import unittest
 from http import HTTPStatus
 from pathlib import Path
-from types import SimpleNamespace
 from urllib.parse import urlparse
 from unittest.mock import Mock
 

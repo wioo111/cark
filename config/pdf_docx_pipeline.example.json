@@ -1,9 +1,9 @@
 {
   "input_pdf": "D:/path/to/paper.pdf",
-  "mineru_output_dir": "./runtime/output/paper-name",
-  "linearized_output": "./runtime/output/paper-name/auto/paper-name_linearized.md",
-  "prepared_output": "./runtime/output/paper-name/auto/paper-name_feishu_docx_ready.md",
-  "title": "论文导读：示例标题",
+  "mineru_output_dir": "./runtime/output/task-example/paper",
+  "linearized_output": "./runtime/output/task-example/paper/auto/paper_linearized.md",
+  "prepared_output": "./runtime/output/task-example/paper/auto/paper_feishu_docx_ready.md",
+  "title": "",
   "backend": "local",
   "model_version": "pipeline",
   "parse_method": "auto",
@@ -11,6 +11,6 @@
   "folder_token": "",
   "reuse_existing_parse": true,
   "replacement_block_limit": 40,
-  "replacements_file": "./config/feishu_text_replacements.example.json",
-  "prepare_only": false
+  "replacements_file": "./config/feishu_text_replacements.json",
+  "prepare_only": true
 }

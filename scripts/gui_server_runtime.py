@@ -4,7 +4,7 @@ import argparse
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def resolve_open_target(record: Any, target: str) -> Path:

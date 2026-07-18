@@ -23,7 +23,7 @@ class PreflightDeliverySurfaceTests(unittest.TestCase):
             (root / "docs" / "windows-usage.md").write_text("docs", encoding="utf-8")
             (root / "scripts").mkdir()
             (root / "scripts" / "smoke_demo.py").write_text("print('ok')", encoding="utf-8")
-            (root / "scripts" / "smoke_demo.ps1").write_text("Write-Host ok", encoding="utf-8")
+            (root / "cli.py").write_text("print('ok')", encoding="utf-8")
             (root / "gui" / "dist").mkdir(parents=True)
             (root / "gui" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
 

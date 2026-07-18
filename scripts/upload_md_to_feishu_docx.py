@@ -11,11 +11,10 @@ import requests
 
 from patch_feishu_doc_images import (
     apply_text_replacements,
-    legacy_frontmatter_replacements,
     load_replacements,
     patch_images,
 )
-from upload_md_to_feishu import FeishuApiError, get_tenant_access_token, parse_json_response, prepare_markdown
+from upload_md_to_feishu import FeishuApiError, get_tenant_access_token, parse_json_response
 
 
 OPEN_FEISHU = "https://open.feishu.cn"
@@ -53,11 +52,6 @@ def parse_args():
         choices=["strip", "note", "keep"],
         default="note",
         help="How to handle local image references before conversion.",
-    )
-    parser.add_argument(
-        "--normalize-frontmatter",
-        action="store_true",
-        help="Deprecated: apply hard-coded fixes for the current test paper only.",
     )
     parser.add_argument(
         "--replacements-file",
@@ -431,14 +425,12 @@ def append_block_children(access_token, document_id, parent_block_id, child_ids,
 
 
 def prepare_markdown(markdown_path, image_mode):
-    # This is imported from upload_md_to_feishu, but we'll override it here 
-    # to inject the Hermes-style academic template.
     from upload_md_to_feishu import prepare_markdown as original_prepare
     prepared_markdown, local_images = original_prepare(markdown_path, image_mode)
     
     prepared_markdown = flatten_html_tables(prepared_markdown)
 
-    # Inject Hermes-style academic template at the top
+    # Add the cark reading template before the paper body.
     title = markdown_path.stem.replace("_feishu_docx_ready", "").replace("_linearized", "").replace("_bilingual", "")
     
     template = f"""# 论文导读：{title}
@@ -500,8 +492,6 @@ def main():
 
     image_results = patch_images(access_token, document_id, prepared_path)
     replacement_rules = load_replacements(args.replacements_file)
-    if args.normalize_frontmatter:
-        replacement_rules.extend(legacy_frontmatter_replacements())
     text_replacements_applied = []
     if replacement_rules:
         text_replacements_applied = apply_text_replacements(

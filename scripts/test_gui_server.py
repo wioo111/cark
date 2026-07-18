@@ -220,7 +220,7 @@ class GuiServerStartupTests(unittest.TestCase):
     def test_agent_messages_include_relevant_global_agent_memory(self):
         record = PaperRecord(
             paper_id="paper-1",
-            title="Hermes Paper",
+            title="Evidence Paper",
             task_id=None,
             root_dir=Path("paper"),
             auto_dir=Path("paper/auto"),
@@ -235,8 +235,8 @@ class GuiServerStartupTests(unittest.TestCase):
                 memory_root,
                 {
                     "type": "research_interest",
-                    "text": "User cares about Hermes-style self-evolving global agent memory.",
-                    "tags": ["Hermes", "agent-memory"],
+                    "text": "User cares about evidence-first self-evolving global agent memory.",
+                    "tags": ["evidence", "agent-memory"],
                 },
             )
 
@@ -245,7 +245,7 @@ class GuiServerStartupTests(unittest.TestCase):
                     record,
                     {
                         "view": "linearized",
-                        "quote": "Hermes-like memory",
+                        "quote": "Evidence-grounded memory",
                         "contextBefore": "",
                         "contextAfter": "",
                         "comments": [],

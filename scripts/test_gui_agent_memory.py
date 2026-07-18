@@ -16,14 +16,14 @@ class GuiAgentMemoryTest(unittest.TestCase):
                 memory_root,
                 {
                     "type": "research_interest",
-                    "text": "The user wants Hermes-style long-term agent memory.",
-                    "tags": ["agent", "Hermes"],
+                    "text": "The user wants evidence-first long-term agent memory.",
+                    "tags": ["agent", "evidence"],
                     "source": {"kind": "conversation", "note": "product direction"},
                     "confidence": 0.9,
                 },
             )
 
-            relevant = gui_agent_memory.select_relevant_agent_memory(memory_root, "Hermes agent", limit=4)
+            relevant = gui_agent_memory.select_relevant_agent_memory(memory_root, "evidence agent", limit=4)
             self.assertEqual(relevant[0]["id"], item["id"])
             self.assertEqual(relevant[0]["confidence"], 0.9)
             self.assertEqual(item["memoryLayer"], "global")
@@ -37,7 +37,7 @@ class GuiAgentMemoryTest(unittest.TestCase):
             )
             self.assertEqual(updated["status"], "archived")
             self.assertEqual(updated["revisionHistory"][0]["reason"], "update")
-            self.assertEqual(gui_agent_memory.select_relevant_agent_memory(memory_root, "Hermes"), [])
+            self.assertEqual(gui_agent_memory.select_relevant_agent_memory(memory_root, "unrelated"), [])
 
             gui_agent_memory.delete_agent_memory_item(memory_root, str(item["id"]))
             self.assertEqual(gui_agent_memory.load_agent_memory_items(memory_root, include_archived=True), [])
