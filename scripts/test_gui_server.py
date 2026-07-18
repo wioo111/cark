@@ -14,7 +14,6 @@ from gui_server import (
     PaperRecord,
     annotation_file_path,
     build_agent_messages,
-    build_task_command,
     ensure_upload_ready,
     import_zotero_paper,
     list_zotero_papers,
@@ -202,25 +201,10 @@ class GuiServerStartupTests(unittest.TestCase):
                     "apiKey": "key",
                     "baseUrl": "https://example.test/v1",
                     "model": "custom-model",
-                    "failRatioLimit": 0.2,
                 }
             }
         )
         self.assertEqual(settings["translation"]["model"], "custom-model")
-
-    def test_zero_translation_failure_limit_is_preserved(self):
-        settings = sanitize_gui_settings(
-            {
-                "translation": {
-                    "enabled": True,
-                    "apiKey": "key",
-                    "failRatioLimit": 0,
-                },
-                "publish": {"prepareOnly": True},
-            }
-        )
-        _, env, _ = build_task_command(Path("paper.pdf"), settings)
-        self.assertEqual(env["TRANSLATE_FAIL_RATIO_LIMIT"], "0.0")
 
     def test_placeholder_agent_comments_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "不允许保存占位评论"):

@@ -91,7 +91,6 @@ function normalizeSettingsPayload(payload: unknown): AppSettings {
       apiKey: String(raw.translation?.apiKey || ''),
       baseUrl: String(raw.translation?.baseUrl || 'https://api.deepseek.com/v1'),
       model: String(raw.translation?.model || 'deepseek-chat'),
-      failRatioLimit: Number(raw.translation?.failRatioLimit ?? 0.2),
     },
     publish: {
       prepareOnly: Boolean(raw.publish?.prepareOnly ?? true),

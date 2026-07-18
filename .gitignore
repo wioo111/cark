@@ -30,6 +30,7 @@ runtime/inputs/
 *.secret
 config/*local*.json
 config/gui_settings.json
+config/gui_settings.json.bak
 # MinerU 下载器生成的本地配置（含本机绝对模型路径），用 config/mineru.example.json 作模板
 config/mineru.json
 

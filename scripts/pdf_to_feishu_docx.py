@@ -153,6 +153,10 @@ def sanitize_stem_for_ascii(value):
     return ascii_value or "input"
 
 
+def strip_artifact_suffix(value):
+    return re.sub(r"_(?:linearized|feishu_docx_ready|bilingual)$", "", value)
+
+
 def stage_input_pdf(input_pdf):
     if all(ord(char) < 128 for char in str(input_pdf)):
         return input_pdf, False
@@ -653,13 +657,40 @@ def main():
 
     assets_synced = sync_parse_assets(content_list_json, settings["linearized_output"].parent)
     linearize_content_list_file(content_list_json, settings["linearized_output"])
+
+    metadata_path = settings["linearized_output"].parent / "paper_metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_payload = {
+        "schemaVersion": 1,
+        "title": settings["title"],
+        "sourceFileName": settings["input_pdf"].name,
+        "artifactStem": strip_artifact_suffix(settings["linearized_output"].stem),
+        "translationStatus": "pending" if settings["translate"] else "disabled",
+    }
+    metadata_path.write_text(
+        json.dumps(metadata_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     
     input_for_feishu = settings["linearized_output"]
     
     if settings["translate"]:
         from translate_content import translate_file
         bilingual_output = settings["linearized_output"].with_name(settings["linearized_output"].stem + "_bilingual.md")
-        translate_file(settings["linearized_output"], bilingual_output)
+        try:
+            translate_file(settings["linearized_output"], bilingual_output)
+        except Exception:
+            metadata_payload["translationStatus"] = "failed"
+            metadata_path.write_text(
+                json.dumps(metadata_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            raise
+        metadata_payload["translationStatus"] = "succeeded"
+        metadata_path.write_text(
+            json.dumps(metadata_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         input_for_feishu = bilingual_output
 
     prepared_markdown, local_images = prepare_markdown_file(
@@ -675,6 +706,7 @@ def main():
         "mineru_output_dir": str(settings["mineru_output_dir"]),
         "content_list_json": str(content_list_json),
         "linearized_markdown": str(settings["linearized_output"]),
+        "paper_metadata": str(metadata_path),
         "prepared_markdown": str(settings["prepared_output"]),
         "image_mode": settings["image_mode"],
         "parse_method": settings["parse_method"],

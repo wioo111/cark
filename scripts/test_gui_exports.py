@@ -16,6 +16,17 @@ def fake_record():
 
 
 class GuiExportsTests(unittest.TestCase):
+    def test_export_filename_preserves_safe_unicode_title(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            record = SimpleNamespace(
+                paper_id="paper-cn",
+                title="大模型 / 学术翻译",
+                updated_at=0,
+            )
+            exported = gui_exports.export_paper_memory_markdown(record, Path(temp_dir))
+
+        self.assertTrue(str(exported["fileName"]).startswith("大模型-学术翻译-memory-"))
+
     def test_paper_memory_markdown_export_preserves_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

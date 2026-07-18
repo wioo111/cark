@@ -3,10 +3,14 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import requests
+
+
+_SETTINGS_MATERIALIZE_LOCK = threading.RLock()
 
 
 def default_gui_settings(
@@ -34,7 +38,6 @@ def default_gui_settings(
             "apiKey": str(os.getenv("OPENAI_API_KEY") or ""),
             "baseUrl": str(os.getenv("OPENAI_BASE_URL") or "https://api.deepseek.com/v1"),
             "model": str(os.getenv("OPENAI_MODEL") or "deepseek-chat"),
-            "failRatioLimit": float(os.getenv("TRANSLATE_FAIL_RATIO_LIMIT") or 0.2),
         },
         "publish": {
             "prepareOnly": bool(pipeline.get("prepare_only", True)),
@@ -77,11 +80,6 @@ def sanitize_gui_settings(
         if publish.get("imageMode") in {"strip", "note", "keep"}
         else defaults["publish"]["imageMode"]
     )
-    try:
-        fail_ratio_limit = float(translation.get("failRatioLimit"))
-    except (TypeError, ValueError):
-        fail_ratio_limit = float(defaults["translation"]["failRatioLimit"])
-
     raw_agents = copilot.get("agents") if isinstance(copilot.get("agents"), list) else None
     if raw_agents is None and any(key in copilot for key in ("apiKey", "baseUrl", "model")):
         raw_agents = [copilot]
@@ -140,7 +138,6 @@ def sanitize_gui_settings(
             "apiKey": str(translation.get("apiKey") or "").strip(),
             "baseUrl": str(translation.get("baseUrl") or defaults["translation"]["baseUrl"]).strip(),
             "model": str(translation.get("model") or defaults["translation"]["model"]).strip(),
-            "failRatioLimit": min(max(fail_ratio_limit, 0.0), 1.0),
         },
         "publish": {
             "prepareOnly": bool(publish.get("prepareOnly", defaults["publish"]["prepareOnly"])),
@@ -163,31 +160,37 @@ def materialize_gui_settings(
     load_json_object: Callable[[Path], dict[str, object]],
     write_json_file: Callable[[Path, Any], None],
 ) -> dict[str, object]:
-    defaults = sanitize_settings(default_settings_factory())
-    existing = load_json_object(settings_path)
-    if existing:
-        merged = sanitize_settings(
-            {
-                "mineru": {
-                    **defaults["mineru"],
-                    **(existing.get("mineru") if isinstance(existing.get("mineru"), dict) else {}),
-                },
-                "translation": {
-                    **defaults["translation"],
-                    **(existing.get("translation") if isinstance(existing.get("translation"), dict) else {}),
-                },
-                "publish": {
-                    **defaults["publish"],
-                    **(existing.get("publish") if isinstance(existing.get("publish"), dict) else {}),
-                },
-                "copilot": existing.get("copilot") if isinstance(existing.get("copilot"), dict) else defaults["copilot"],
-            }
-        )
-    else:
-        merged = defaults
-    if not settings_path.exists() or load_json_object(settings_path) != merged:
-        write_json_file(settings_path, merged)
-    return merged
+    with _SETTINGS_MATERIALIZE_LOCK:
+        defaults = sanitize_settings(default_settings_factory())
+        existing = load_json_object(settings_path)
+        if existing:
+            merged = sanitize_settings(
+                {
+                    "mineru": {
+                        **defaults["mineru"],
+                        **(existing.get("mineru") if isinstance(existing.get("mineru"), dict) else {}),
+                    },
+                    "translation": {
+                        **defaults["translation"],
+                        **(existing.get("translation") if isinstance(existing.get("translation"), dict) else {}),
+                    },
+                    "publish": {
+                        **defaults["publish"],
+                        **(existing.get("publish") if isinstance(existing.get("publish"), dict) else {}),
+                    },
+                    "copilot": existing.get("copilot") if isinstance(existing.get("copilot"), dict) else defaults["copilot"],
+                }
+            )
+        else:
+            merged = defaults
+        persisted_settings = {
+            key: value
+            for key, value in existing.items()
+            if key != "schemaVersion"
+        }
+        if not settings_path.exists() or persisted_settings != merged:
+            write_json_file(settings_path, merged)
+        return merged
 
 
 def load_gui_settings(
@@ -317,7 +320,7 @@ def ensure_upload_ready(
     detect_capabilities_func: Callable[[Optional[dict[str, object]]], dict[str, object]],
     settings: Optional[dict[str, object]] = None,
 ) -> None:
-    capabilities = detect_capabilities_func(settings)
+    capabilities = detect_capabilities_func(settings=settings)
     issues = capabilities.get("issues")
     if isinstance(issues, list) and issues:
         messages = [

@@ -62,6 +62,17 @@ def detect_content_list(auto_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
+def load_paper_metadata(auto_dir: Path) -> dict[str, object]:
+    metadata_path = auto_dir / "paper_metadata.json"
+    if not metadata_path.exists():
+        return {}
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def discover_records(
     *,
     runtime_output_dir: Path,
@@ -75,7 +86,9 @@ def discover_records(
         if auto_dir.name != "auto":
             continue
 
-        title = strip_known_suffix(linearized_path.stem)
+        artifact_stem = strip_known_suffix(linearized_path.stem)
+        metadata = load_paper_metadata(auto_dir)
+        title = str(metadata.get("title") or artifact_stem).strip() or artifact_stem
         root_dir = auto_dir.parent
         task_id: str | None = None
         if root_dir.parent.parent == runtime_output_dir and uuid_dir_re.match(root_dir.parent.name):
@@ -83,10 +96,15 @@ def discover_records(
 
         paper_id = encode_paper_id(task_id, title)
         content_list = detect_content_list(auto_dir)
-        bilingual = find_primary_file(auto_dir, title, ["_linearized_bilingual.md", "_bilingual.md"])
+        translation_status = str(metadata.get("translationStatus") or "")
+        bilingual = (
+            None
+            if translation_status and translation_status != "succeeded"
+            else find_primary_file(auto_dir, artifact_stem, ["_linearized_bilingual.md", "_bilingual.md"])
+        )
         feishu_ready = find_primary_file(
             auto_dir,
-            title,
+            artifact_stem,
             [
                 "_linearized_feishu_docx_ready.md",
                 "_feishu_docx_ready.md",

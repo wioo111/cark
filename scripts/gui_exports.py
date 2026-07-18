@@ -143,5 +143,7 @@ def optional_string(value: object) -> str | None:
 
 
 def safe_slug(value: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._")
+    slug = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value.strip())
+    slug = re.sub(r"\s+", "-", slug).strip("-._ ")
+    slug = re.sub(r"-{2,}", "-", slug)
     return slug[:80]

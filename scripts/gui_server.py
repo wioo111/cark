@@ -1,7 +1,5 @@
-import hashlib
 import os
 import re
-import shutil
 import sys
 import threading
 import uuid
@@ -10,15 +8,13 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import urlparse
 
 import gui_annotations
 import gui_app_settings
 import gui_app_utils
 import gui_http
 import gui_copilot
-import gui_locator
-import gui_paper_index
 import gui_papers
 import gui_server_bindings
 import gui_server_common
@@ -66,7 +62,7 @@ INSTANCE_LOCK_PATH = RUNTIME_ROOT_DIR / "locks" / "gui_server.lock"
 GUI_SETTINGS_PATH = CONFIG_DIR / "gui_settings.json"
 GUI_UPLOADS_DIR = RUNTIME_ROOT_DIR / "uploads" / "gui"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-UUID_DIR_RE = re.compile(r"^[0-9a-fA-F-]{32,36}$")
+UUID_DIR_RE = re.compile(r"^(?:[0-9a-fA-F-]{32,36}|task-\d{14}-[0-9a-fA-F]{6})$")
 PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -158,6 +154,7 @@ build_task_command = partial(
     workbench_root=WORKBENCH_ROOT,
     build_direct_network_env=lambda: gui_app_utils.build_direct_network_env(PROXY_ENV_KEYS),
     sanitize_ascii_stem=gui_app_utils.sanitize_ascii_stem,
+    runtime_output_dir=RUNTIME_OUTPUT_DIR,
     python_executable=sys.executable,
 )
 

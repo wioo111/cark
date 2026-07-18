@@ -65,6 +65,11 @@ def sanitize_filename(name: str) -> str:
         return f"upload-{uuid.uuid4().hex[:8]}.pdf"
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", base_name)
     cleaned = cleaned.strip(" .")
+    suffix = Path(cleaned).suffix[:16]
+    stem = Path(cleaned).stem[: max(1, 180 - len(suffix))].rstrip(" .")
+    if re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", stem):
+        stem = f"_{stem}"
+    cleaned = f"{stem}{suffix}" if stem else ""
     return cleaned or f"upload-{uuid.uuid4().hex[:8]}.pdf"
 
 
