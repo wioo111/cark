@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core'
+
 const SERVER_URL_KEY = 'cark-mobile-server-url'
 
 export function normalizeServerUrl(value: string) {
@@ -14,6 +16,10 @@ export function setApiBaseUrl(value: string) {
   if (typeof localStorage === 'undefined') return
   if (normalized) localStorage.setItem(SERVER_URL_KEY, normalized)
   else localStorage.removeItem(SERVER_URL_KEY)
+}
+
+export function isNativeOfflineMode() {
+  return Capacitor.isNativePlatform() && !getApiBaseUrl()
 }
 
 export function withApiBaseUrl(input: RequestInfo | URL): RequestInfo | URL {

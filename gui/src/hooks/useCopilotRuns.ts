@@ -8,6 +8,7 @@ import {
   postRetryCopilotRun,
 } from '@/api'
 import type { CopilotRun, CreateCopilotRunInput, PaperAnnotation } from '@/types'
+import { isNativeOfflineMode } from '@/utils/apiBase'
 
 interface UseCopilotRunsOptions {
   paperId: string | null
@@ -27,7 +28,7 @@ export function useCopilotRuns({
   useEffect(() => {
     refreshedRunIdsRef.current = new Set()
     setCopilotRuns([])
-    if (!normalizedPaperId) {
+    if (!normalizedPaperId || isNativeOfflineMode()) {
       return
     }
 
@@ -50,7 +51,7 @@ export function useCopilotRuns({
   }, [normalizedPaperId])
 
   useEffect(() => {
-    if (!normalizedPaperId) {
+    if (!normalizedPaperId || isNativeOfflineMode()) {
       return
     }
     let cancelled = false

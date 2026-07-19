@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Capacitor } from '@capacitor/core'
 
 import {
   fetchSearchResults,
+  fetchSettings,
   fetchPaperDetail,
   fetchAgentMemory,
   fetchMemoryCandidates,
@@ -231,6 +233,20 @@ describe('paper library api', () => {
         }),
       }),
     )
+  })
+})
+
+describe('native offline errors', () => {
+  it('turns the bundled HTML fallback into a readable offline message', async () => {
+    const platformSpy = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true)
+    vi.stubGlobal('caches', { match: vi.fn().mockResolvedValue(undefined) })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<!doctype html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    })))
+
+    await expect(fetchSettings()).rejects.toThrow('此功能需要连接电脑')
+    platformSpy.mockRestore()
   })
 })
 

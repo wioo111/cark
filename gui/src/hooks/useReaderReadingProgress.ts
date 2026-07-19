@@ -5,6 +5,7 @@ import type { AnnotationComposerDraft } from '@/components/CommentLane'
 import type { PaperDetail, PaperView } from '@/types'
 import { createSaveScheduler, type SaveScheduler } from '@/utils/saveScheduler'
 import { saveOfflineReadingState } from '@/utils/offlineReadingState'
+import { isNativeOfflineMode } from '@/utils/apiBase'
 
 interface UseReaderReadingProgressArgs {
   detail: PaperDetail | null
@@ -72,6 +73,10 @@ export function useReaderReadingProgress({
         draft: snapshot.draft,
       }
       saveOfflineReadingState(detail.id, readingState)
+      if (isNativeOfflineMode()) {
+        setReadingStateError(null)
+        return
+      }
       try {
         await saveReadingState(
           detail.id,

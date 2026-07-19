@@ -44,7 +44,10 @@ export function MobileServerGate({ children }: { children: ReactNode }) {
     return (
       <>
         {children}
-        <div className="fixed right-3 top-3 z-[80] flex flex-col items-end gap-2">
+        {window.location.pathname === '/' ? <div
+          className="fixed right-3 z-[80] flex flex-col items-end gap-2"
+          style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}
+        >
           <MobilePaperImportButton compact onImported={() => window.location.reload()} />
           <button
             type="button"
@@ -54,7 +57,7 @@ export function MobileServerGate({ children }: { children: ReactNode }) {
             <Wifi className="h-3.5 w-3.5" />
             {configuredUrl ? '服务器' : '连接电脑（可选）'}
           </button>
-        </div>
+        </div> : null}
       </>
     )
   }

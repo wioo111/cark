@@ -1,5 +1,3 @@
-import { Capacitor } from '@capacitor/core'
-
 import type {
   AppSettings,
   AppCapabilities,
@@ -36,7 +34,7 @@ import type {
   ZoteroPaper,
   ZoteroStatus,
 } from '@/types'
-import { getApiBaseUrl, withApiBaseUrl } from '@/utils/apiBase'
+import { isNativeOfflineMode, withApiBaseUrl } from '@/utils/apiBase'
 
 function createDefaultCopilotAgent(overrides?: Partial<CopilotAgentConfig>): CopilotAgentConfig {
   return {
@@ -114,7 +112,7 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
   const isGet = !init?.method || init.method === 'GET'
   let response: Response
   try {
-    const nativeOfflineResponse = isGet && Capacitor.isNativePlatform() && !getApiBaseUrl() && typeof caches !== 'undefined'
+    const nativeOfflineResponse = isGet && isNativeOfflineMode() && typeof caches !== 'undefined'
       ? await caches.match(resolvedInput)
       : undefined
     response = nativeOfflineResponse ?? await fetch(resolvedInput, init)
@@ -141,7 +139,11 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T
     }
     throw new Error(parsedError || message || `请求失败: ${response.status}`)
   }
-  return response.json() as Promise<T>
+  try {
+    return await response.json() as T
+  } catch {
+    throw new Error(isNativeOfflineMode() ? '此功能需要连接电脑' : '服务器返回了无法识别的响应')
+  }
 }
 
 export function fetchPapers() {

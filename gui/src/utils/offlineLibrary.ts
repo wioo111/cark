@@ -1,4 +1,4 @@
-import type { PaperDetail } from '@/types'
+import type { PaperDetail, PaperSummary, UpdatePaperLibraryInput } from '@/types'
 import { resolveMediaUrl } from '@/utils/markdown'
 import { withApiBaseUrl } from '@/utils/apiBase'
 
@@ -35,6 +35,29 @@ export function listOfflinePapers() {
 
 export function isPaperOffline(paperId: string) {
   return readLibrary().some((entry) => entry.id === paperId)
+}
+
+function localCacheUrl(path: string) {
+  return new URL(path, window.location.origin).href
+}
+
+export async function updateOfflinePaperSummary(paperId: string, payload: UpdatePaperLibraryInput) {
+  const cache = await window.caches.open(PAPER_CACHE_NAME)
+  const listUrl = localCacheUrl('/api/papers')
+  const response = await cache.match(listUrl)
+  if (!response) throw new Error('本机书架数据不存在')
+  const papers = await response.json() as PaperSummary[]
+  const current = papers.find((paper) => paper.id === paperId)
+  if (!current) throw new Error('本机书架中没有这篇论文')
+  const updated: PaperSummary = {
+    ...current,
+    ...payload,
+    libraryUpdatedAt: new Date().toISOString(),
+  }
+  await cache.put(listUrl, new Response(JSON.stringify([
+    ...papers.map((paper) => paper.id === paperId ? updated : paper),
+  ]), { headers: { 'Content-Type': 'application/json; charset=utf-8' } }))
+  return updated
 }
 
 function markdownImageSources(markdown: string) {

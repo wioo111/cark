@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { AlertCircle, RefreshCw, Search, Settings2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -33,6 +34,8 @@ import type {
   UpdatePaperLibraryInput,
 } from '@/types'
 import { buildSearchResultHref, matchesQuery } from '@/utils/paper'
+import { isNativeOfflineMode } from '@/utils/apiBase'
+import { updateOfflinePaperSummary } from '@/utils/offlineLibrary'
 
 type LibraryFilter = 'all' | 'favorite' | 'annotated' | 'memory' | PaperReadingStatus
 
@@ -85,6 +88,8 @@ function createFallbackSettings(): AppSettings {
 }
 
 export default function Home() {
+  const nativeApp = Capacitor.isNativePlatform()
+  const nativeOffline = isNativeOfflineMode()
   const [query, setQuery] = useState('')
   const [settings, setSettings] = useState<AppSettings>(createFallbackSettings)
   const [capabilities, setCapabilities] = useState<AppCapabilities | null>(null)
@@ -124,6 +129,12 @@ export default function Home() {
   }, [refreshPapers])
 
   const loadResearchState = useCallback(async () => {
+    if (nativeOffline) {
+      setResearchState(null)
+      setResearchError(null)
+      setResearchLoading(false)
+      return
+    }
     setResearchLoading(true)
     setResearchError(null)
     try {
@@ -134,13 +145,20 @@ export default function Home() {
     } finally {
       setResearchLoading(false)
     }
-  }, [])
+  }, [nativeOffline])
 
   useEffect(() => {
     void loadResearchState()
   }, [loadResearchState])
 
   useEffect(() => {
+    if (nativeOffline) {
+      setTasks([])
+      setTasksLoading(false)
+      setCapabilities(null)
+      setBootstrapError(null)
+      return
+    }
     let cancelled = false
 
     async function bootstrap() {
@@ -183,7 +201,7 @@ export default function Home() {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [])
+  }, [nativeOffline])
 
   useEffect(() => {
     const nextCompleted = new Set(completedTaskIdsRef.current)
@@ -247,7 +265,7 @@ export default function Home() {
 
   useEffect(() => {
     const trimmedQuery = query.trim()
-    if (!trimmedQuery) {
+    if (!trimmedQuery || nativeOffline) {
       setSearchResults([])
       setSearchLoading(false)
       setSearchError(null)
@@ -281,7 +299,7 @@ export default function Home() {
       cancelled = true
       window.clearTimeout(timerId)
     }
-  }, [query])
+  }, [nativeOffline, query])
 
   const recentPapers = useMemo(() => {
     const paperById = new Map(papers.map((paper) => [paper.id, paper]))
@@ -382,7 +400,9 @@ export default function Home() {
   async function handleLibraryUpdate(paper: PaperSummary, payload: UpdatePaperLibraryInput) {
     setUpdatingPaperId(paper.id)
     try {
-      const nextPaper = await patchPaperLibrary(paper.id, payload)
+      const nextPaper = nativeOffline
+        ? await updateOfflinePaperSummary(paper.id, payload)
+        : await patchPaperLibrary(paper.id, payload)
       updatePaper(nextPaper)
       setBootstrapError(null)
     } catch (error) {
@@ -409,25 +429,27 @@ export default function Home() {
   return (
     <main className="cark-page min-h-screen">
       <div className="mx-auto min-h-screen max-w-[1600px] px-6 py-6 lg:px-8">
-        <header className="flex items-center justify-between gap-5">
+        <header className={`${nativeApp ? 'mt-24 ' : ''}flex items-center justify-between gap-5`}>
           <div>
             <p className="cark-faint text-xs uppercase tracking-[0.28em]">cark</p>
             <h1 className="cark-title mt-1 font-serif text-3xl">论文库</h1>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <ThemeSwitch />
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
-            >
-              <Settings2 className="h-4 w-4" />
-              设置
-            </button>
+            {!nativeOffline ? (
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="cark-button-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm"
+              >
+                <Settings2 className="h-4 w-4" />
+                设置
+              </button>
+            ) : null}
           </div>
         </header>
 
-        {capabilities && !capabilities.ready ? (
+        {!nativeOffline && capabilities && !capabilities.ready ? (
           <section className="mt-6 flex flex-col justify-between gap-3 rounded-[22px] border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 sm:flex-row sm:items-center">
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" />
@@ -447,24 +469,26 @@ export default function Home() {
           </section>
         ) : null}
 
-        <div className={capabilities && !capabilities.ready ? 'mt-4' : 'mt-6'}>
-          <UploadPanel
-            uploading={uploading}
-            disabled={uploadBlocked}
-            disabledReason={uploadBlocked ? uploadBlockedReason : null}
-            error={uploadError}
-            onUpload={(files) => void handleUpload(files)}
-            onOpenZotero={() => setZoteroOpen(true)}
-          />
-        </div>
+        {!nativeOffline ? (
+          <div className={capabilities && !capabilities.ready ? 'mt-4' : 'mt-6'}>
+            <UploadPanel
+              uploading={uploading}
+              disabled={uploadBlocked}
+              disabledReason={uploadBlocked ? uploadBlockedReason : null}
+              error={uploadError}
+              onUpload={(files) => void handleUpload(files)}
+              onOpenZotero={() => setZoteroOpen(true)}
+            />
+          </div>
+        ) : null}
 
-        {bootstrapError ? (
+        {!nativeOffline && bootstrapError ? (
           <div className="mt-4 rounded-[20px] border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
             {bootstrapError}
           </div>
         ) : null}
 
-        <section className="mt-6 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <section className={nativeOffline ? 'mt-6 grid min-w-0 gap-6' : 'mt-6 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_390px]'}>
           <div className="cark-panel min-w-0 rounded-[30px] p-5 lg:p-6">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
               <div>
@@ -549,7 +573,7 @@ export default function Home() {
               </section>
             ) : null}
 
-            {hasQuery ? (
+            {hasQuery && !nativeOffline ? (
               <section className="mt-6">
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="cark-text text-sm font-medium">全文命中</h3>
@@ -612,14 +636,14 @@ export default function Home() {
                 ))}
                 {!papersLoading && filteredPapers.length === 0 ? (
                   <div className="cark-faint rounded-[22px] border border-dashed [border-color:var(--border-strong)] px-5 py-8 text-center text-sm">
-                    {hasQuery ? '没有匹配的论文。' : '还没有论文。上传第一篇 PDF。'}
+                    {hasQuery ? '没有匹配的论文。' : nativeOffline ? '还没有论文。请从右上角导入文献包。' : '还没有论文。上传第一篇 PDF。'}
                   </div>
                 ) : null}
               </div>
             </section>
           </div>
 
-          <div className="space-y-6">
+          {!nativeOffline ? <div className="space-y-6">
             <MemoryInbox
               onChanged={() => {
                 void refreshPapers()
@@ -652,22 +676,22 @@ export default function Home() {
               onOpenPaper={openPaper}
               onOpenSettings={() => setSettingsOpen(true)}
             />
-          </div>
+          </div> : null}
         </section>
       </div>
 
-      <SettingsPanel
+      {!nativeOffline ? <SettingsPanel
         open={settingsOpen}
         settings={settings}
         capabilities={capabilities}
         onClose={() => setSettingsOpen(false)}
         onSaved={(nextSettings) => void handleSettingsSaved(nextSettings)}
-      />
-      <ZoteroImportDialog
+      /> : null}
+      {!nativeOffline ? <ZoteroImportDialog
         open={zoteroOpen}
         onClose={() => setZoteroOpen(false)}
         onImported={handleZoteroImported}
-      />
+      /> : null}
     </main>
   )
 }

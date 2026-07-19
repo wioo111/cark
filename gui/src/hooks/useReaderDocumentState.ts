@@ -10,6 +10,7 @@ import type { AnnotationComposerDraft } from '@/components/CommentLane'
 import type { AppSettings, PaperAnnotation, PaperDetail, PaperView } from '@/types'
 import { normalizeDraftComposerState } from '@/utils/readerAnnotationHelpers'
 import { preferNewestReadingState, readOfflineReadingState } from '@/utils/offlineReadingState'
+import { isNativeOfflineMode } from '@/utils/apiBase'
 
 function createFallbackSettings(): AppSettings {
   return {
@@ -85,7 +86,7 @@ export function useReaderDocumentState({
         const [annotationResult, readingStateResult, settingsResult] = await Promise.allSettled([
           fetchPaperAnnotations(paperId),
           fetchReadingState(paperId),
-          fetchSettings(),
+          isNativeOfflineMode() ? Promise.resolve(createFallbackSettings()) : fetchSettings(),
         ])
         if (cancelled) {
           return
