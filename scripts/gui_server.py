@@ -77,6 +77,11 @@ STORE = WorkbenchStore(DATABASE_PATH)
 SERVER_INSTANCE_ID = f"{os.getpid()}-{uuid.uuid4().hex}"
 ZOTERO_IMPORT_LOCK = threading.Lock()
 COPILOT_RUN_TIMEOUT_SECONDS = 180
+MOBILE_APP_ORIGINS = {"https://localhost", "capacitor://localhost"}
+
+
+def is_mobile_app_origin(origin: str | None) -> bool:
+    return bool(origin and origin.strip().lower() in MOBILE_APP_ORIGINS)
 
 
 PaperRecord = gui_server_common.PaperRecord
@@ -400,10 +405,20 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
         gui_http.log_message(format, *args)
 
     def end_headers(self):
+        origin = self.headers.get("Origin")
+        if is_mobile_app_origin(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Headers", "Accept, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+            self.send_header("Vary", "Origin")
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.end_headers()
 
     def read_json_body(self) -> dict[str, object]:
         return gui_http.read_json_body(self)

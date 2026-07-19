@@ -16,6 +16,7 @@ from gui_server import (
     build_agent_messages,
     ensure_upload_ready,
     import_zotero_paper,
+    is_mobile_app_origin,
     list_zotero_papers,
     load_paper_annotations,
     normalize_annotation_comment,
@@ -74,6 +75,12 @@ class FakeServer:
 
 
 class GuiServerStartupTests(unittest.TestCase):
+    def test_only_capacitor_origins_receive_mobile_cors_access(self):
+        self.assertTrue(is_mobile_app_origin("https://localhost"))
+        self.assertTrue(is_mobile_app_origin("capacitor://localhost"))
+        self.assertFalse(is_mobile_app_origin("https://example.com"))
+        self.assertFalse(is_mobile_app_origin(None))
+
     def test_lock_failure_does_not_bind_or_mark_tasks(self):
         lock = FakeLock(acquire_result=False)
         store = FakeStore()

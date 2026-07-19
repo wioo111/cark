@@ -1,5 +1,6 @@
 import type { PaperDetail } from '@/types'
 import { resolveMediaUrl } from '@/utils/markdown'
+import { withApiBaseUrl } from '@/utils/apiBase'
 
 export const PAPER_CACHE_NAME = 'cark-paper-v1'
 const OFFLINE_LIBRARY_KEY = 'cark-offline-library-v1'
@@ -45,9 +46,10 @@ function markdownImageSources(markdown: string) {
 }
 
 async function cacheUrl(cache: Cache, url: string) {
-  const response = await fetch(url, { credentials: 'same-origin' })
+  const resolvedUrl = withApiBaseUrl(url) as string
+  const response = await fetch(resolvedUrl, { credentials: 'same-origin' })
   if (!response.ok) throw new Error(`下载失败 (${response.status})`)
-  await cache.put(url, response.clone())
+  await cache.put(resolvedUrl, response.clone())
 }
 
 export async function downloadPaperForOffline(detail: PaperDetail) {

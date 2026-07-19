@@ -34,6 +34,7 @@ import type {
   ZoteroPaper,
   ZoteroStatus,
 } from '@/types'
+import { withApiBaseUrl } from '@/utils/apiBase'
 
 function createDefaultCopilotAgent(overrides?: Partial<CopilotAgentConfig>): CopilotAgentConfig {
   return {
@@ -107,7 +108,22 @@ function normalizeSettingsPayload(payload: unknown): AppSettings {
 }
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init)
+  const resolvedInput = withApiBaseUrl(input)
+  let response: Response
+  try {
+    response = await fetch(resolvedInput, init)
+    if (!response.ok && response.status >= 500 && (!init?.method || init.method === 'GET') && typeof caches !== 'undefined') {
+      response = (await caches.match(resolvedInput)) ?? response
+    }
+  } catch (fetchError) {
+    if ((!init?.method || init.method === 'GET') && typeof caches !== 'undefined') {
+      const cached = await caches.match(resolvedInput)
+      if (cached) response = cached
+      else throw fetchError
+    } else {
+      throw fetchError
+    }
+  }
   if (!response.ok) {
     const message = await response.text()
     let parsedError: string | null = null

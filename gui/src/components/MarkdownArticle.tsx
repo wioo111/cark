@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
@@ -38,6 +38,25 @@ interface ArticleImageProps {
 function ArticleImage({ paperId, src, alt }: ArticleImageProps) {
   const [failed, setFailed] = useState(false)
   const [decorative, setDecorative] = useState(false)
+  const remoteUrl = resolveMediaUrl(paperId, src)
+  const [displayUrl, setDisplayUrl] = useState(remoteUrl)
+
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+    setDisplayUrl(remoteUrl)
+    if ('caches' in window && remoteUrl && !remoteUrl.startsWith('data:')) {
+      window.caches.match(remoteUrl).then(async (cached) => {
+        if (!cached || cancelled) return
+        objectUrl = URL.createObjectURL(await cached.blob())
+        if (!cancelled) setDisplayUrl(objectUrl)
+      }).catch(() => undefined)
+    }
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [remoteUrl])
 
   if (decorative) {
     return null
@@ -54,7 +73,7 @@ function ArticleImage({ paperId, src, alt }: ArticleImageProps) {
   return (
     <figure className="cark-doc-figure" data-locator-node="true">
       <img
-        src={resolveMediaUrl(paperId, src)}
+        src={displayUrl}
         alt={alt}
         loading="eager"
         decoding="async"

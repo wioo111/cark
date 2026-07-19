@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   fetchSearchResults,
+  fetchPaperDetail,
   fetchAgentMemory,
   fetchMemoryCandidates,
   fetchMemoryResearchState,
@@ -189,6 +190,17 @@ describe('paper memory api', () => {
 })
 
 describe('paper library api', () => {
+  it('falls back to a downloaded paper when the server is offline', async () => {
+    const cached = new Response(JSON.stringify({ id: 'paper-1', title: 'Offline paper' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')))
+    vi.stubGlobal('caches', { match: vi.fn().mockResolvedValue(cached) })
+
+    await expect(fetchPaperDetail('paper-1')).resolves.toMatchObject({ title: 'Offline paper' })
+  })
+
   it('patches paper library metadata', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

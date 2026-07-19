@@ -17,7 +17,19 @@
    ```
 
 3. 用手机打开 Tailscale 给出的 HTTPS 地址。
-4. iPhone/iPad 在浏览器分享菜单中选择“添加到主屏幕”；Android 在浏览器菜单中选择“安装应用”。
+4. Android 可以安装仓库编译出的 APK；首次启动时输入上一步的 HTTPS 地址。网页版本仍可从浏览器添加到主屏幕。
+
+## 编译 Android APK
+
+安装 Android Studio 及 Android SDK 后运行：
+
+```powershell
+cd gui
+npm run android:apk
+```
+
+调试包输出到 `gui/android/app/build/outputs/apk/debug/app-debug.apk`。原生应用仅允许连接 HTTPS 地址，电脑端只对 Capacitor 本地来源开放跨域访问。
+脚本会自动使用 Android Studio 自带的 JDK，并从常见位置寻找 Android SDK，无需手动设置环境变量。
 
 ## 出门前
 

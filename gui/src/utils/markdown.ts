@@ -34,7 +34,7 @@ export function resolveMediaUrl(paperId: string, source: string) {
     ? `auto/${normalized}`
     : normalized
 
-  return `/api/media/${encodeURIComponent(paperId)}?path=${encodeURIComponent(relativePath)}`
+  return `${getApiBaseUrl()}/api/media/${encodeURIComponent(paperId)}?path=${encodeURIComponent(relativePath)}`
 }
 
 export function isDecorativeExtractedImage(width: number, height: number, alt: string) {
@@ -111,3 +111,4 @@ export function scrollToArticleSection(container: ParentNode, id: string) {
   window.scrollTo({ top: targetTop, behavior: 'auto' })
   return true
 }
+import { getApiBaseUrl } from '@/utils/apiBase'

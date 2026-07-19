@@ -342,6 +342,13 @@ html[data-theme-mode="light"] .cark-chip-accent {
   backdrop-filter: blur(22px);
 }
 
+.cark-mobile-server-button {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  top: max(0.75rem, env(safe-area-inset-top));
+}
+
 .cark-mobile-reader-dock {
   bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
