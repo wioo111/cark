@@ -1,9 +1,11 @@
-import { ArrowRight, BookOpen, CheckCircle2, Circle, MessageSquareText, Star, Tags } from 'lucide-react'
+import { ArrowRight, BookOpen, CheckCircle2, Circle, LoaderCircle, MessageSquareText, PackageOpen, Star, Tags } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import type { PaperReadingStatus, PaperSummary } from '@/types'
 import { formatUpdatedAt } from '@/utils/paper'
 import { isPaperOffline } from '@/utils/offlineLibrary'
+import { createMobilePaperPackage, downloadMobilePaperPackage } from '@/utils/mobilePaperPackage'
 
 interface PaperListItemProps {
   paper: PaperSummary
@@ -31,6 +33,21 @@ export function PaperListItem({
   const readingStatus = paper.readingStatus ?? 'unread'
   const tags = paper.tags ?? []
   const offline = isPaperOffline(paper.id)
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  async function handlePackageExport() {
+    setExporting(true)
+    setExportError(null)
+    try {
+      const result = await createMobilePaperPackage(paper)
+      downloadMobilePaperPackage(result.blob, result.fileName)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '手机文献包导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <article className="cark-card group flex min-w-0 w-full overflow-hidden rounded-[28px] px-5 py-5 transition duration-200 hover:border-[rgba(var(--accent-rgb),0.35)] hover:bg-[var(--surface-soft)]">
@@ -84,6 +101,17 @@ export function PaperListItem({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              disabled={exporting}
+              onClick={() => void handlePackageExport()}
+              aria-label="Export mobile paper package"
+              title="导出手机文献包"
+              className="cark-button-secondary inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PackageOpen className="h-4 w-4" />}
+              {exporting ? '打包中' : '手机包'}
+            </button>
+            <button
+              type="button"
               disabled={updating}
               onClick={() => onFavoriteToggle?.(paper)}
               aria-label={paper.favorite ? 'Unfavorite paper' : 'Favorite paper'}
@@ -104,6 +132,8 @@ export function PaperListItem({
               <Tags className="h-4 w-4" />
             </button>
           </div>
+
+          {exportError ? <p className="max-w-36 text-right text-[11px] text-rose-300">{exportError}</p> : null}
 
           <select
             value={readingStatus}

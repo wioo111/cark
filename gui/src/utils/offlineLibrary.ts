@@ -25,6 +25,10 @@ function writeLibrary(entries: OfflinePaperEntry[]) {
   window.dispatchEvent(new CustomEvent('cark-offline-library-change'))
 }
 
+export function registerOfflinePaper(entry: OfflinePaperEntry) {
+  writeLibrary([entry, ...readLibrary().filter((item) => item.id !== entry.id)])
+}
+
 export function listOfflinePapers() {
   return readLibrary()
 }
@@ -82,7 +86,7 @@ export async function downloadPaperForOffline(detail: PaperDetail) {
     title: detail.title,
     downloadedAt: new Date().toISOString(),
   }
-  writeLibrary([nextEntry, ...readLibrary().filter((entry) => entry.id !== detail.id)])
+  registerOfflinePaper(nextEntry)
   return { downloaded: results.filter((result) => result.status === 'fulfilled').length, total: results.length }
 }
 

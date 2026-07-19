@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core'
+
 import type {
   AppSettings,
   AppCapabilities,
@@ -34,7 +36,7 @@ import type {
   ZoteroPaper,
   ZoteroStatus,
 } from '@/types'
-import { withApiBaseUrl } from '@/utils/apiBase'
+import { getApiBaseUrl, withApiBaseUrl } from '@/utils/apiBase'
 
 function createDefaultCopilotAgent(overrides?: Partial<CopilotAgentConfig>): CopilotAgentConfig {
   return {
@@ -109,14 +111,18 @@ function normalizeSettingsPayload(payload: unknown): AppSettings {
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const resolvedInput = withApiBaseUrl(input)
+  const isGet = !init?.method || init.method === 'GET'
   let response: Response
   try {
-    response = await fetch(resolvedInput, init)
-    if (!response.ok && response.status >= 500 && (!init?.method || init.method === 'GET') && typeof caches !== 'undefined') {
+    const nativeOfflineResponse = isGet && Capacitor.isNativePlatform() && !getApiBaseUrl() && typeof caches !== 'undefined'
+      ? await caches.match(resolvedInput)
+      : undefined
+    response = nativeOfflineResponse ?? await fetch(resolvedInput, init)
+    if (!response.ok && response.status >= 500 && isGet && typeof caches !== 'undefined') {
       response = (await caches.match(resolvedInput)) ?? response
     }
   } catch (fetchError) {
-    if ((!init?.method || init.method === 'GET') && typeof caches !== 'undefined') {
+    if (isGet && typeof caches !== 'undefined') {
       const cached = await caches.match(resolvedInput)
       if (cached) response = cached
       else throw fetchError

@@ -2,13 +2,15 @@ import { Capacitor } from '@capacitor/core'
 import { LoaderCircle, Server, Wifi } from 'lucide-react'
 import { type FormEvent, type ReactNode, useState } from 'react'
 
+import { MobilePaperImportButton } from '@/components/MobilePaperImportButton'
 import { getApiBaseUrl, normalizeServerUrl, setApiBaseUrl } from '@/utils/apiBase'
+import { listOfflinePapers } from '@/utils/offlineLibrary'
 
 export function MobileServerGate({ children }: { children: ReactNode }) {
   const native = Capacitor.isNativePlatform()
   const [configuredUrl, setConfiguredUrl] = useState(getApiBaseUrl)
   const [input, setInput] = useState(configuredUrl)
-  const [editing, setEditing] = useState(!configuredUrl)
+  const [editing, setEditing] = useState(!configuredUrl && listOfflinePapers().length === 0)
   const [testing, setTesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,18 +40,21 @@ export function MobileServerGate({ children }: { children: ReactNode }) {
     }
   }
 
-  if (!editing && configuredUrl) {
+  if (!editing) {
     return (
       <>
         {children}
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="cark-mobile-server-button cark-elevated fixed right-3 top-3 z-[80] inline-flex h-10 items-center gap-2 rounded-full px-3 text-xs"
-        >
-          <Wifi className="h-3.5 w-3.5" />
-          服务器
-        </button>
+        <div className="fixed right-3 top-3 z-[80] flex flex-col items-end gap-2">
+          <MobilePaperImportButton compact onImported={() => window.location.reload()} />
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="cark-mobile-server-button cark-elevated inline-flex h-10 items-center gap-2 rounded-full px-3 text-xs"
+          >
+            <Wifi className="h-3.5 w-3.5" />
+            {configuredUrl ? '服务器' : '连接电脑（可选）'}
+          </button>
+        </div>
       </>
     )
   }
@@ -60,8 +65,16 @@ export function MobileServerGate({ children }: { children: ReactNode }) {
         <div className="cark-button-accent inline-flex h-12 w-12 items-center justify-center rounded-2xl">
           <Server className="h-5 w-5" />
         </div>
-        <h1 className="cark-title mt-5 font-serif text-2xl">连接你的 cark</h1>
-        <p className="cark-muted mt-2 text-sm leading-6">输入电脑端 Tailscale Serve 显示的 HTTPS 地址。论文下载到设备后，电脑关机也能继续阅读。</p>
+        <h1 className="cark-title mt-5 font-serif text-2xl">导入离线文献包</h1>
+        <p className="cark-muted mt-2 text-sm leading-6">把电脑导出的 .carkpaper 文件发到手机，在这里直接选择。导入后阅读不需要电脑，也不需要网络。</p>
+        <div className="mt-5">
+          <MobilePaperImportButton onImported={() => window.location.reload()} />
+        </div>
+        <div className="my-6 flex items-center gap-3">
+          <span className="h-px flex-1 bg-[var(--border)]" />
+          <span className="cark-faint text-xs">可选：连接电脑同步</span>
+          <span className="h-px flex-1 bg-[var(--border)]" />
+        </div>
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
