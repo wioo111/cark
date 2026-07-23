@@ -3,24 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
 
 # ===== 虚拟环境 =====
 .venv/
 venv/
-
-# ===== runtime: 模型 / 缓存 / 运行期产物(都不该提交) =====
-runtime/models/
-runtime/hf-home/
-runtime/modelscope-cache/
-runtime/python/
-runtime/uv-cache/
-runtime/pip-cache/
-runtime/tmp/
-runtime/logs/
-runtime/locks/
-runtime/uploads/
-runtime/output/
-runtime/inputs/
 
 # ===== 日志 =====
 *.log
@@ -37,7 +24,7 @@ config/feishu_text_replacements.json
 # MinerU 下载器生成的本地配置（含本机绝对模型路径），用 config/mineru.example.json 作模板
 config/mineru.json
 
-# ===== 整个 runtime 运行期目录（保险起见整体忽略，仅保留占位） =====
+# ===== runtime: 论文、模型、缓存和运行产物均不提交，仅保留目录占位 =====
 runtime/*
 !runtime/.gitkeep
 
